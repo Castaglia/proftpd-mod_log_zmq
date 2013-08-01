@@ -1,5 +1,5 @@
 /*
- * ProFTPD: mod_log_zmq -- logs JSON data via ZeroMQ
+ * ProFTPD: mod_log_zmq -- logs data via ZeroMQ (using JSON)
  *
  * Copyright (c) 2013 TJ Saunders
  *
@@ -25,16 +25,17 @@
  * $Archive: mod_log_zmq.a $
  */
 
+#include "mod_log.h"
 #include "mod_log_zmq.h"
 #include "json.h"
 
-#ifndef HAVE_LIBZMQ
+#ifndef HAVE_ZMQ_H
 # error "ZeroMQ (libzmq) library required"
-#endif /* HAVE_LIBZMQ */
+#endif /* HAVE_ZMQ_H */
 
-#ifndef HAVE_LIBCZMQ
+#ifndef HAVE_CZMQ_H
 # error "CZeroMQ (libczmq) library required"
-#endif /* HAVE_LIBCZMQ */
+#endif /* HAVE_CZMQ_H */
 
 #include <zmq.h>
 #include <czmq.h>
@@ -45,17 +46,86 @@ static int log_zmq_engine = FALSE;
 int log_zmq_logfd = -1;
 pool *log_zmq_pool = NULL;
 
+/* DeliveryMode values */
+#define LOG_ZMQ_DELIVERY_MODE_OPTIMISTIC	1
+#define LOG_ZMQ_DELIVERY_MODE_GUARANTEED	2
+
+/* Format values */
+#define LOG_ZMQ_PAYLOAD_FMT_JSON		1
+
 static zctx_t *zctx = NULL;
-static void *publisher = NULL;
-static array_header *notifys = NULL;
+static void *zsock = NULL;
+static array_header *endpoints = NULL;
+
+/* For tracking the size of deleted files. */
+static off_t log_zmq_dele_filesz = 0;
 
 static const char *trace_channel = "log_zmq";
+
+/* Necessary prototypes */
+static int log_zmq_sess_init(void);
 
 /* Command handlers
  */
 
 /* Configuration handlers
  */
+
+/* usage: LogZMQDeliveryMode optimistic|guaranteed */
+MODRET set_logzmqdeliverymode(cmd_rec *cmd) {
+  config_rec *c;
+  int delivery_mode = 0;
+
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+  CHECK_ARGS(cmd, 1); 
+
+  if (strcasecmp(cmd->argv[1], "optimistic") == 0) {
+    delivery_mode = LOG_ZMQ_DELIVERY_MODE_OPTIMISTIC;
+
+  } else if (strcasecmp(cmd->argv[1], "guaranteed") == 0) {
+    delivery_mode = LOG_ZMQ_DELIVERY_MODE_GUARANTEED;
+
+  } else {
+    CONF_ERROR(cmd, pstrcat("unsupported delivery mode: '", cmd->argv[1], "'",
+      NULL));
+  }
+
+  c = add_config_param(cmd->argv[0], 1, NULL);
+  c->argv[0] = palloc(c->pool, sizeof(int));
+  *((int *) c->argv[0]) = delivery_mode;
+
+  return PR_HANDLED(cmd);
+}
+
+/* usage: LogZMQEndpoint fmt-name address */
+MODRET set_logzmqendpoint(cmd_rec *cmd) {
+  config_rec *c;
+
+  /* XXX Future enhancement to support <Anonymous>-specific notifying? */
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+
+  if (cmd->argc < 3 ||
+      cmd->argc > 4) {
+    CONF_ERROR(cmd, "wrong number of parameters");
+  }
+
+  /* XXX Double-check that fmt-name is valid, defined, etc. Look up the
+   * format string, and stash a pointer to that in the config_rec (but NOT
+   * a copy of the format string; don't need to use that much memory.
+   *
+   * Requires a tweak to mod_log so that LogFormat config directives are
+   * added to the config tree.
+   */
+
+  c = add_config_param(cmd->argv[0], 3, NULL, NULL, NULL);
+
+  c->argv[1] = pstrdup(c->pool, cmd->argv[2]);
+  if (cmd->argc == 4) {
+    c->argv[2] = pstrdup(c->pool, cmd->argv[3]);
+  }
+
+  return PR_HANDLED(cmd);
+}
 
 /* usage: LogZMQEngine on|off */
 MODRET set_logzmqengine(cmd_rec *cmd) {
@@ -77,6 +147,28 @@ MODRET set_logzmqengine(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
+/* usage: LogZMQFormat json */
+MODRET set_logzmqformat(cmd_rec *cmd) {
+  int payload_fmt = 0;
+  config_rec *c;
+
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+  CHECK_ARGS(cmd, 1);
+
+  if (strcasecmp(cmd->argv[1], "json") == 0) {
+    payload_fmt = LOG_ZMQ_PAYLOAD_FMT_JSON;
+
+  } else {
+    CONF_ERROR(cmd, "unsupported payload format: '", cmd->argv[1], "'", NULL);
+  }
+
+  c = add_config_param(cmd->argv[0], 1, NULL);
+  c->argv[0] = pcalloc(c->pool, sizeof(int));
+  *((int *) c->argv[0]) = payload_fmt;
+
+  return PR_HANDLED(cmd);
+}
+
 /* usage: LogZMQLog path|"none" */
 MODRET set_logzmqlog(cmd_rec *cmd) {
   CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
@@ -86,31 +178,84 @@ MODRET set_logzmqlog(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
-/* usage: LogZMQNotify fmt-name address topic-name */
-MODRET set_logzmqnotify(cmd_rec *cmd) {
-  config_rec *c;
+/* Command handlers
+ */
 
-  /* XXX Future enhancement to support <Anonymous>-specific notifying? */
-  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+MODRET log_zmq_any(cmd_rec *cmd) {
+  unsigned char *fmt;
 
-  if (cmd->argc < 3 ||
-      cmd->argc > 4) {
-    CONF_ERROR(cmd, "wrong number of parameters");
-  }
-
-  /* XXX Double-check that fmt-name is valid, defined, etc. Look up the
-   * format string, and stash a pointer to that in the config_rec (but NOT
-   * a copy of the format string; don't need to use that much memory.
+  /* XXX For each endpoint, do this.  We don't use log classes, and instead
+   * treat each log as if it were CL_ALL.
+   *
+   * for each endpoint
+   *  get LogFormat
+   *  create JsonNode
+   *  iterate LogFormat, building JsonNode
+   *  stringify JsonNode into JSON
+   *  send JSON via zsock
    */
 
-  c = add_config_param(cmd->argv[0], 3, NULL, NULL, NULL);
+  /* XXX Create JsonNode here, and pass ref to it to the meta-examining func. */
 
-  c->argv[1] = pstrdup(c->pool, cmd->argv[2]);
-  if (cmd->argc == 4) {
-    c->argv[2] = pstrdup(c->pool, cmd->argv[3]);
+  fmt = c->argv[1];
+  while (*fmt) {
+    pr_signals_handle();
+
+    if (*fmt == LOGFMT_META_START) {
+    
+    } else {
+      fmt++;
+    }
   }
 
-  return PR_HANDLED(cmd);
+  return PR_DECLINED(cmd);
+}
+
+MODRET log_zmq_pre_dele(cmd_rec *cmd) {
+  char *path;
+
+  log_zmq_dele_filesz = 0;
+
+  path = dir_canonical_path(cmd->tmp_pool,
+    pr_fs_decode_path(cmd->tmp_pool, cmd->arg));
+  if (path) {
+    struct stat st;
+
+    /* Briefly cache the size of the file being deleted, so that it can be
+     * logged properly using %b.
+     */
+    pr_fs_clear_cache();
+    if (pr_fsio_stat(path, &st) == 0)
+      log_zmq_dele_filesz = st.st_size;
+  }
+
+  return PR_DECLINED(cmd);
+}
+
+MODRET log_zmq_post_host(cmd_rec *cmd) {
+  /* If the HOST command changed the main_server pointer, reinitialize
+   * ourselves.
+   */
+  if (session.prev_server != NULL) {
+    int res;
+
+    log_zmq_engine = FALSE;
+
+    (void) close(log_zmq_logfd);
+    log_zmq_logfd = -1;
+
+    if (zctx != NULL) {
+      zctx_destroy(&zctx);
+    }
+
+    res = log_zmq_sess_init();
+    if (res < 0) {
+      pr_session_disconnect(&log_zmq_module,
+        PR_SESS_DISCONNECT_SESS_INIT_FAILED, NULL);
+    }
+  }
+
+  return PR_DECLINED(cmd);
 }
 
 /* Event listeners
@@ -126,7 +271,7 @@ static void log_zmq_exit_ev(const void *event_data, void *user_data) {
     zctx_set_linger(zctx, 750);
 
     zctx_destroy(&zctx);
-    publisher = NULL;
+    zsock = NULL;
   }
 }
 
@@ -206,6 +351,11 @@ static int log_zmq_sess_init(void) {
     }
   }
 
+  c = find_config(main_server->conf, CONF_PARAM, "LogZMQDeliveryMode", FALSE);
+  if (c != NULL) {
+    delivery_mode = *((int *) c->argv[0]);
+  }
+
   zctx = zctx_new();
   if (zctx == NULL) {
     (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
@@ -215,17 +365,18 @@ static int log_zmq_sess_init(void) {
     return 0;
   }
 
-  publisher = zsocket_new(zctx, ZMQ_PUB);
-  if (publisher == NULL) {
+  zsock = zsocket_new(zctx,
+    delivery_mode == LOG_ZMQ_DELIVERY_MODE_OPTIMISTIC ? ZMQ_PUB : ZMQ_PUSH);
+  if (zsock == NULL) {
     (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
-      "error creating ZMQ publisher socket: %s: disabling module",
+      "error creating ZMQ socket: %s: disabling module",
       zmq_strerror(zmq_errno()));
     zctx_destroy(&zctx);
     log_zmq_engine = FALSE;
     return 0;
   }
 
-  /* XXX Look up LogZMQNotify directives, bind publisher to those addresses */
+  /* XXX Look up LogZMQEndpoint directives, bind socket to those addresses */
 
   return 0;
 }
@@ -234,14 +385,21 @@ static int log_zmq_sess_init(void) {
  */
 
 static conftable log_zmq_conftab[] = {
-  { "LogZMQEngine",	set_logzmqengine,	NULL },
-  { "LogZMQLog",	set_logzmqlog,		NULL },
-  { "LogZMQNotify",	set_logzmqnotify,	NULL },
+  { "LogZMQDeliveryMode",	set_logzmqdeliverymode,	NULL },
+  { "LogZMQEndpoint",		set_logzmqendpoint,	NULL },
+  { "LogZMQEngine",		set_logzmqengine,	NULL },
+  { "LogZMQFormat",		set_logzmqformat,	NULL },
+  { "LogZMQLog",		set_logzmqlog,		NULL },
 
   { NULL }
 };
 
 static cmdtable log_zmq_cmdtab[] = {
+  { PRE_CMD,		C_DELE,	G_NONE,	log_zmq_pre_dele,	FALSE, FALSE },
+  { LOG_CMD,		C_ANY,	G_NONE, log_zmq_any,		FALSE, FALSE },
+  { LOG_CMD_ERR,	C_ANY,	G_NONE, log_zmq_any,		FALSE, FALSE },
+  { POST_CMD,		C_HOST, G_NONE,	log_zmq_post_host,	FALSE, FALSE },
+
   { 0, NULL }
 };
 
