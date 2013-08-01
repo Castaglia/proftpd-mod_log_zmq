@@ -52,6 +52,7 @@ pool *log_zmq_pool = NULL;
 
 /* Format values */
 #define LOG_ZMQ_PAYLOAD_FMT_JSON		1
+#define LOG_ZMQ_PAYLOAD_FMT_MSGPACK		2
 
 static zctx_t *zctx = NULL;
 static void *zsock = NULL;
@@ -184,6 +185,16 @@ MODRET set_logzmqlog(cmd_rec *cmd) {
 MODRET log_zmq_any(cmd_rec *cmd) {
   unsigned char *fmt;
 
+  if (log_zmq_engine == FALSE) {
+    return PR_DECLINED(cmd);
+  }
+
+  if (endpoints == NULL ||
+      enpdoints->nelts == 0) {
+    /* No configured endpoints means no logging work for us to do. */
+    return PR_DECLINED(cmd);
+  }
+
   /* XXX For each endpoint, do this.  We don't use log classes, and instead
    * treat each log as if it were CL_ALL.
    *
@@ -213,6 +224,10 @@ MODRET log_zmq_any(cmd_rec *cmd) {
 
 MODRET log_zmq_pre_dele(cmd_rec *cmd) {
   char *path;
+
+  if (log_zmq_engine == FALSE) {
+    return PR_DECLINED(cmd);
+  }
 
   log_zmq_dele_filesz = 0;
 
@@ -376,7 +391,33 @@ static int log_zmq_sess_init(void) {
     return 0;
   }
 
-  /* XXX Look up LogZMQEndpoint directives, bind socket to those addresses */
+  /* Look up LogZMQEndpoint directives, bind socket to those addresses */
+  c = find_config(main_server->conf, CONF_PARAM, "LogZMQEndpoint", FALSE);
+  while (c != NULL) {
+    pr_signals_handle();
+
+    if (zsocket_bind(zsock, c->argv[1]) < 0) {
+      (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+        "error binding to LogZMQEndpoint '%s': %s", c->argv[1],
+        zmq_strerror(zmq_errno()));
+      c = find_config_next(c, c->next, CONF_PARAM, "LogZMQEndpoint", FALSE);
+      continue;
+    }
+
+    if (endpoints == NULL) {
+      endpoints = make_array(log_zmq_pool, 1, sizeof(config_rec *));
+    }
+
+    *((config_rec **) push_array(endpoints) = c;
+    c = find_config_next(c, c->next, CONF_PARAM, "LogZMQEndpoint", FALSE);
+  }
+
+  /* If no endpoints are configured, log a warning and disable ourselves. */
+  if (endpoints == NULL) {
+    (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+      "no LogZMQEndpoints configured, disabling module");
+    log_zmq_engine = FALSE;
+  }
 
   return 0;
 }
