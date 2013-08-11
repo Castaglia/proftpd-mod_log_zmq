@@ -32,8 +32,6 @@ AC_MINIX
 AC_HEADER_STDC
 AC_CHECK_HEADERS(stdlib.h unistd.h limits.h fcntl.h sys/sysctl.h sys/sysinfo.h)
 
-AC_CHECK_HEADERS(zmq.h czmq.h)
-
 dnl Need to support/handle the --with-includes and --with-libraries options
 AC_ARG_WITH(includes,
   [AC_HELP_STRING(

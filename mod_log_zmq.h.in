@@ -26,15 +26,6 @@
 #ifndef MOD_LOG_ZMQ_H
 #define MOD_LOG_ZMQ_H
 
-#include "conf.h"
-#include "privs.h"
-
-/* Define if you have the <czmq.h> header file.  */
-#undef HAVE_CZMQ_H
-
-/* Define if you have the <zmq.h> header file.  */
-#undef HAVE_ZMQ_H
-
 #define MOD_LOG_ZMQ_VERSION	"mod_log_zmq/0.0"
 
 /* Make sure the version of proftpd is as necessary. */
