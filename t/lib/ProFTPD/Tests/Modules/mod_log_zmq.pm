@@ -68,6 +68,8 @@ sub log_zmq_list {
     '/bin/bash');
   auth_group_write($auth_group_file, $group, $gid, $user);
 
+  $ENV{FOO} = "bar baz";
+
   my $config = {
     PidFile => $pid_file,
     ScoreboardFile => $scoreboard_file,
@@ -89,7 +91,7 @@ sub log_zmq_list {
   if (open(my $fh, ">> $config_file")) {
     print $fh <<EOC;
 <IfModule mod_log_zmq.c>
-  LogFormat custom "%u: %m (%b)"
+  LogFormat custom "%u: %m (%b) [%T] %{FOO}e %{iso8601}"
 
   LogZMQEngine on
   LogZMQLog $log_file

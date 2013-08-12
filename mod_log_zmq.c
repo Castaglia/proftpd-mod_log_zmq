@@ -150,7 +150,7 @@ static int log_zmq_mkfieldtab(pool *p) {
   field_add(p, LOGFMT_META_FILENAME, "file",
     LOG_ZMQ_FIELD_TYPE_STRING);
 
-  field_add(p, LOGFMT_META_ENV_VAR, "env:",
+  field_add(p, LOGFMT_META_ENV_VAR, "ENV:",
     LOG_ZMQ_FIELD_TYPE_STRING);
 
   field_add(p, LOGFMT_META_REMOTE_HOST, "remote_dns",
@@ -168,7 +168,7 @@ static int log_zmq_mkfieldtab(pool *p) {
   field_add(p, LOGFMT_META_TIME, "local_time",
     LOG_ZMQ_FIELD_TYPE_STRING);
 
-  field_add(p, LOGFMT_META_SECONDS, "secs",
+  field_add(p, LOGFMT_META_SECONDS, "transfer_secs",
     LOG_ZMQ_FIELD_TYPE_NUMBER);
 
   field_add(p, LOGFMT_META_COMMAND, "raw_command",
@@ -249,7 +249,7 @@ static int log_zmq_mkfieldtab(pool *p) {
   field_add(p, LOGFMT_META_VHOST_IP, "server_ip",
     LOG_ZMQ_FIELD_TYPE_STRING);
 
-  field_add(p, LOGFMT_META_NOTE_VAR, "note:",
+  field_add(p, LOGFMT_META_NOTE_VAR, "NOTE:",
     LOG_ZMQ_FIELD_TYPE_STRING);
 
   field_add(p, LOGFMT_META_XFER_STATUS, "transfer_status",
@@ -300,16 +300,16 @@ static void log_zmq_mkjson(void *json, const char *field_name,
   }
 }
 
-static char *get_meta_arg(pool *p, unsigned char **m, size_t *arglen) {
+static char *get_meta_arg(pool *p, unsigned char *m, size_t *arglen) {
   char buf[PR_TUNABLE_PATH_MAX+1], *ptr;
   size_t len;
 
   ptr = buf;
   len = 0;
 
-  while (**m != LOGFMT_META_ARG_END) {
+  while (*m != LOGFMT_META_ARG_END) {
     pr_signals_handle();
-    *ptr++ = (char) **m++;
+    *ptr++ = (char) *m++;
     len++;
   }
 
@@ -331,18 +331,6 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
     NULL);
 
   switch (*m) {
-    case LOGFMT_META_ARG: {
-      m++;
-
-      /* XXX How to handle these? */
-      while (*m != LOGFMT_META_ARG_END) {
-        pr_signals_handle();
-      }
-
-      m++;
-      break;
-    }
-
     case LOGFMT_META_BYTES_SENT:
       if (session.xfer.p) {
         double bytes_sent;
@@ -374,7 +362,7 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
         char *key, *env = NULL;
         size_t keylen = 0;
 
-        key = get_meta_arg(p, &m, &keylen);
+        key = get_meta_arg(p, (m+2), &keylen);
         m += keylen;
 
         env = pr_env_get(p, key); 
@@ -382,13 +370,12 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
           char *field_name;
           size_t field_namelen;
 
-          field_name = pstrcat(p, fi->field_name, ":", key, NULL);
+          field_name = pstrcat(p, fi->field_name, key, NULL);
           field_namelen = strlen(field_name);
 
           mkfield(obj, field_name, field_namelen, fi->field_type, env);
         }
       }
-
       break;
    
 
@@ -442,6 +429,35 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
       break;
 
     case LOGFMT_META_SECONDS:
+      if (session.xfer.p != NULL) {
+        /* Make sure that session.xfer.start_time actually has values (which
+         * is not always the case).
+         */
+        if (session.xfer.start_time.tv_sec != 0 ||
+            session.xfer.start_time.tv_usec != 0) {
+          struct timeval end_time;
+          double xfer_secs;
+
+          gettimeofday(&end_time, NULL);
+          end_time.tv_sec -= session.xfer.start_time.tv_sec;
+
+          if (end_time.tv_usec >= session.xfer.start_time.tv_usec) {
+            end_time.tv_usec -= session.xfer.start_time.tv_usec;
+
+          } else {
+            end_time.tv_usec = 1000000L - (session.xfer.start_time.tv_usec -
+              end_time.tv_usec);
+            end_time.tv_sec--;
+          }
+
+          xfer_secs = end_time.tv_sec;
+          xfer_secs += (double) ((double) end_time.tv_usec / (double) 1000);
+
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            &xfer_secs);
+        }
+      }
+
       m++;
       break;
 
@@ -754,13 +770,181 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
 
     case LOGFMT_META_NOTE_VAR:
       m++;
+
+      if (*m == LOGFMT_META_START &&
+          *(m+1) == LOGFMT_META_ARG) {
+        char *key, *note = NULL;
+        size_t keylen = 0;
+
+        key = get_meta_arg(p, (m+2), &keylen);
+        m += keylen;
+
+        /* Check in the cmd->notes table first. */
+        note = pr_table_get(cmd->notes, key, NULL);
+        if (note == NULL) {
+          /* If not there, check in the session.notes table. */
+          note = pr_table_get(session.notes, key, NULL);
+        }
+
+        if (note != NULL) {
+          char *field_name;
+          size_t field_namelen;
+
+          field_name = pstrcat(p, fi->field_name, note, NULL);
+          field_namelen = strlen(field_name);
+
+          mkfield(obj, field_name, field_namelen, fi->field_type, note);
+        }
+      }
       break;
 
     case LOGFMT_META_XFER_STATUS:
+      /* If the current command is one that incurs a data transfer, then we
+       * need to do more work.  If not, it's an easy substitution.
+       */
+      if (session.curr_cmd_id == PR_CMD_ABOR_ID ||
+          session.curr_cmd_id == PR_CMD_APPE_ID ||
+          session.curr_cmd_id == PR_CMD_LIST_ID ||
+          session.curr_cmd_id == PR_CMD_MLSD_ID ||
+          session.curr_cmd_id == PR_CMD_NLST_ID ||
+          session.curr_cmd_id == PR_CMD_RETR_ID ||
+          session.curr_cmd_id == PR_CMD_STOR_ID ||
+          session.curr_cmd_id == PR_CMD_STOU_ID) {
+        const char *proto;
+
+        proto = pr_session_get_protocol(0);
+
+        if (strncmp(proto, "ftp", 4) == 0 ||
+            strncmp(proto, "ftps", 5) == 0) {
+          if (!(XFER_ABORTED)) {
+            int res;
+            char *resp_code = NULL, *resp_msg = NULL;
+
+            /* Get the last response code/message.  We use heuristics here to
+             * determine when to use "failed" versus "success".
+             */
+            res = pr_response_get_last(p, &resp_code, &resp_msg);
+            if (res == 0 &&
+                resp_code != NULL) {
+              if (*resp_code == '2') {
+                const char *status;
+
+                if (pr_cmd_cmp(cmd, PR_CMD_ABOR_ID) != 0) {
+                  status = "success";
+
+                } else {
+                  /* We're handling the ABOR command, so obviously the value
+                   * should be 'cancelled'.
+                   */
+                  status = "cancelled";
+                }
+
+                mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+                  status);
+
+              } else if (*resp_code == '1') {
+                const char *status = "timeout";
+
+                /* If the first digit of the response code is 1, then the
+                 * response code (for a data transfer command) is probably 150,
+                 * which means that the transfer was still in progress (didn't
+                 * complete with a 2xx/4xx response code) when we are called
+                 * here, which in turn means a timeout kicked in.
+                 */
+                mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+                  status);
+
+              } else {
+                const char *status = "failed";
+
+                mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+                  status);
+              }
+
+            } else {
+              const char *status = "success";
+
+              mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+                status);
+            }
+
+          } else {
+            const char *status = "cancelled";
+
+            mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+              status);
+          }
+
+        } else {
+          /* mod_sftp stashes a note for us in the command notes if the
+           * transfer failed.
+           */
+          char *status;
+
+          status = pr_table_get(cmd->notes, "mod_sftp.file-status", NULL);
+          if (status == NULL) {
+            status = "success";
+
+          } else {
+            status = "failed";
+          }
+
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            status);
+        }
+      }
+
       m++;
       break;
 
     case LOGFMT_META_XFER_FAILURE:
+      /* If the current command is one that incurs a data transfer, then we
+       * need to do more work.  If not, it's an easy substitution.
+       */
+      if (session.curr_cmd_id == PR_CMD_APPE_ID ||
+          session.curr_cmd_id == PR_CMD_LIST_ID ||
+          session.curr_cmd_id == PR_CMD_MLSD_ID ||
+          session.curr_cmd_id == PR_CMD_NLST_ID ||
+          session.curr_cmd_id == PR_CMD_RETR_ID ||
+          session.curr_cmd_id == PR_CMD_STOR_ID ||
+          session.curr_cmd_id == PR_CMD_STOU_ID) {
+        const char *proto;
+
+        proto = pr_session_get_protocol(0);
+
+        if (strncmp(proto, "ftp", 4) == 0 ||
+            strncmp(proto, "ftps", 5) == 0) {
+
+          if (!(XFER_ABORTED)) {
+            int res;
+            char *resp_code = NULL, *resp_msg = NULL;
+
+            /* Get the last response code/message.  We use heuristics here to
+             * determine when to use "failed" versus "success".
+             */
+            res = pr_response_get_last(cmd->tmp_pool, &resp_code, &resp_msg);
+            if (res == 0 &&
+                resp_code != NULL) {
+              if (*resp_code != '2' &&
+                  *resp_code != '1') {
+                char *ptr;
+
+                /* Parse out/prettify the resp_msg here */
+                ptr = strchr(resp_msg, '.');
+                if (ptr != NULL) {
+                  mkfield(obj, fi->field_name, fi->field_namelen,
+                    fi->field_type, ptr + 2);
+
+                } else {
+                  mkfield(obj, fi->field_name, fi->field_namelen,
+                    fi->field_type, resp_msg);
+                }
+              }
+            }
+          }
+        }
+      }
+
       m++;
       break;
 
@@ -793,9 +977,27 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
       break;
     }
 
-    case LOGFMT_META_ISO8601:
+    case LOGFMT_META_ISO8601: {
+      char ts[128];
+      struct tm *tm;
+      struct timeval now;
+      unsigned long millis;
+      size_t len;
+
+      gettimeofday(&now, NULL);
+      tm = pr_localtime(NULL, (const time_t *) &(now.tv_sec));
+
+      len = strftime(ts, sizeof(ts)-1, "%Y-%m-%d %H:%M:%S", tm);
+
+      /* Convert microsecs to millisecs. */
+      millis = now.tv_usec / 1000;
+
+      snprintf(ts + len, sizeof(ts) - len - 1, ",%03lu", millis);
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, ts);
+
       m++;
       break;
+    }
 
     case LOGFMT_META_GROUP:
       if (session.group != NULL) {
