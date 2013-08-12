@@ -89,7 +89,7 @@ sub log_zmq_list {
   if (open(my $fh, ">> $config_file")) {
     print $fh <<EOC;
 <IfModule mod_log_zmq.c>
-  LogFormat custom "%u: %m"
+  LogFormat custom "%u: %m (%b)"
 
   LogZMQEngine on
   LogZMQLog $log_file

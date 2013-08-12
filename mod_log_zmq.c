@@ -300,6 +300,25 @@ static void log_zmq_mkjson(void *json, const char *field_name,
   }
 }
 
+static char *get_meta_arg(pool *p, unsigned char **m, size_t *arglen) {
+  char buf[PR_TUNABLE_PATH_MAX+1], *ptr;
+  size_t len;
+
+  ptr = buf;
+  len = 0;
+
+  while (**m != LOGFMT_META_ARG_END) {
+    pr_signals_handle();
+    *ptr++ = (char) **m++;
+    len++;
+  }
+
+  *ptr = '\0';
+  *arglen = len;
+
+  return pstrdup(p, buf);
+}
+
 static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
     void *obj,
     void (*mkfield)(void *, const char *, size_t, unsigned int, const void *)) {
@@ -326,12 +345,18 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
 
     case LOGFMT_META_BYTES_SENT:
       if (session.xfer.p) {
+        double bytes_sent;
+
+        bytes_sent = session.xfer.total_bytes;
         mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
-          &session.xfer.total_bytes);
+          &bytes_sent);
 
       } else if (pr_cmd_cmp(cmd, PR_CMD_DELE_ID) == 0) {
+        double bytes_sent;
+
+        bytes_sent = log_zmq_dele_filesz;
         mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
-          &log_zmq_dele_filesz);
+          &bytes_sent);
       }
 
       m++;
@@ -343,23 +368,74 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
 
     case LOGFMT_META_ENV_VAR:
       m++;
-      break;
 
-    case LOGFMT_META_REMOTE_HOST:
+      if (*m == LOGFMT_META_START &&
+          *(m+1) == LOGFMT_META_ARG) {
+        char *key, *env = NULL;
+        size_t keylen = 0;
+
+        key = get_meta_arg(p, &m, &keylen);
+        m += keylen;
+
+        env = pr_env_get(p, key); 
+        if (env != NULL) {
+          char *field_name;
+          size_t field_namelen;
+
+          field_name = pstrcat(p, fi->field_name, ":", key, NULL);
+          field_namelen = strlen(field_name);
+
+          mkfield(obj, field_name, field_namelen, fi->field_type, env);
+        }
+      }
+
+      break;
+   
+
+    case LOGFMT_META_REMOTE_HOST: {
+      const char *name;
+
+      name = pr_netaddr_get_sess_remote_name();
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, name);
+
       m++;
       break;
+    }
 
-    case LOGFMT_META_REMOTE_IP:
+    case LOGFMT_META_REMOTE_IP: {
+      const char *ipstr;
+
+      ipstr = pr_netaddr_get_ipstr(pr_netaddr_get_sess_local_addr());
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        ipstr);
+
       m++;
       break;
+    }
 
-    case LOGFMT_META_IDENT_USER:
+    case LOGFMT_META_IDENT_USER: {
+      char *ident_user;
+
+      ident_user = pr_table_get(session.notes, "mod_ident.rfc1413-ident", NULL);
+      if (ident_user != NULL) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          ident_user);
+      }
+
       m++;
       break;
+    }
 
-    case LOGFMT_META_PID:
+    case LOGFMT_META_PID: {
+      double sess_pid;
+
+      sess_pid = session.pid;
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        &sess_pid);
+
       m++;
       break;
+    }
 
     case LOGFMT_META_TIME:
       m++;
@@ -394,11 +470,16 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
       m++;
       break;
 
-    case LOGFMT_META_LOCAL_PORT:
+    case LOGFMT_META_LOCAL_PORT: {
+      double server_port;
+
+      server_port = cmd->server->ServerPort;
       mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
-        &(cmd->server->ServerPort));
+        &server_port);
+
       m++;
       break;
+    }
 
     case LOGFMT_META_LOCAL_IP: {
       const char *ipstr;
@@ -406,6 +487,7 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
       ipstr = pr_netaddr_get_ipstr(pr_netaddr_get_sess_local_addr());
       mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
         ipstr);
+
       m++;
       break;
     }
@@ -416,6 +498,7 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
       dnsstr = pr_netaddr_get_dnsstr(pr_netaddr_get_sess_local_addr());
       mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
         dnsstr);
+
       m++;
       break;
     }
@@ -429,15 +512,48 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
       m++;
       break;
 
-    case LOGFMT_META_ORIGINAL_USER:
-      m++;
-      break;
+    case LOGFMT_META_ORIGINAL_USER: {
+      char *orig_user = NULL;
 
-    case LOGFMT_META_RESPONSE_CODE:
+      orig_user = pr_table_get(session.notes, "mod_auth.orig-user", NULL);
+      if (orig_user != NULL) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          orig_user);
+      }
+
       m++;
       break;
+    }
+
+    case LOGFMT_META_RESPONSE_CODE: {
+      char *resp_code = NULL;
+      int res;
+
+      res = pr_response_get_last(cmd->tmp_pool, &resp_code, NULL);
+      if (res == 0 &&
+          resp_code != NULL) {
+        double code;
+
+        code = atoi(resp_code);
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, &code);
+
+      /* Hack to add return code for proper logging of QUIT command. */
+      } else if (pr_cmd_cmp(cmd, PR_CMD_QUIT_ID) == 0) {
+        double code = 221;
+
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, &code);
+      }
+
+      m++;
+      break;
+    }
 
     case LOGFMT_META_CLASS:
+      if (session.conn_class != NULL) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          session.conn_class);
+      }
+
       m++;
       break;
 
@@ -446,11 +562,9 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
 
       anon_pass = pr_table_get(session.notes, "mod_auth.anon-passwd", NULL);
       if (anon_pass == NULL) {
-        anon_pass = "UNKNOWN";
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          anon_pass);
       }
-
-      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
-        anon_pass);
 
       m++;
       break;
@@ -467,7 +581,6 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
         /* Make sure that the SITE command used is all in uppercase,
          * for logging purposes.
          */
-
         for (ptr = cmd->argv[1]; *ptr; ptr++) {
           *ptr = toupper((int) *ptr);
         }
@@ -481,6 +594,217 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
       m++;
       break;
     }
+
+    case LOGFMT_META_XFER_PATH:
+      m++;
+      break;
+
+    case LOGFMT_META_DIR_NAME:
+      m++;
+      break;
+
+    case LOGFMT_META_DIR_PATH:
+      m++;
+      break;
+
+    case LOGFMT_META_CMD_PARAMS:
+      if (pr_cmd_cmp(cmd, PR_CMD_PASS_ID) == 0) {
+        const char *params = "(hidden)";
+
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, params);
+
+      } else if (cmd->argc > 1) {
+        const char *params;
+
+        params = pr_fs_decode_path(p, cmd->arg);
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, params);
+      }
+
+      m++;
+      break;
+
+    case LOGFMT_META_RESPONSE_STR:
+      m++;
+      break;
+
+    case LOGFMT_META_PROTOCOL: {
+      const char *proto;
+
+      proto = pr_session_get_protocol(0);
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, proto);
+
+      m++;
+      break;
+    }
+
+    case LOGFMT_META_VERSION: {
+      const char *version;
+
+      version = PROFTPD_VERSION_TEXT;
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, version);
+
+      m++;
+      break;
+    }
+
+    case LOGFMT_META_RENAME_FROM:
+      if (pr_cmd_cmp(cmd, PR_CMD_RNTO_ID) == 0) {
+        char *rnfr_path;
+
+        rnfr_path = pr_table_get(session.notes, "mod_core.rnfr-path", NULL);
+        if (rnfr_path != NULL) {
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            rnfr_path);
+        }
+      }
+
+      m++;
+      break;
+
+    case LOGFMT_META_FILE_MODIFIED: {
+      bool modified = false;
+      char *val;
+
+      val = pr_table_get(cmd->notes, "mod_xfer.file-modified", NULL);
+      if (val != NULL) {
+        if (strncmp(val, "true", 5) == 0) {
+          modified = true;
+        }
+      }
+
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        &modified);
+
+      m++;
+      break;
+    }
+
+    case LOGFMT_META_UID: {
+      double sess_uid;
+
+      sess_uid = session.login_uid;
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        &sess_uid);
+
+      m++;
+      break;
+    }
+
+    case LOGFMT_META_GID: {
+      double sess_gid;
+
+      sess_gid = session.login_gid;
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        &sess_gid);
+
+      m++;
+      break;
+    }
+
+    case LOGFMT_META_RAW_BYTES_IN: {
+      double bytes_rcvd;
+
+      bytes_rcvd = session.total_raw_in;
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        &bytes_rcvd);
+
+      m++;
+      break;
+    }
+
+    case LOGFMT_META_RAW_BYTES_OUT: {
+      double bytes_sent;
+
+      bytes_sent = session.total_raw_out;
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        &bytes_sent);
+
+      m++;
+      break;
+    }
+
+    case LOGFMT_META_EOS_REASON: {
+      const char *reason = NULL;
+      char *details = NULL;
+
+      reason = pr_session_get_disconnect_reason(&details);
+      if (reason != NULL) {
+        if (details != NULL) {
+          char buf[256];
+
+          memset(buf, '\0', sizeof(buf));
+          snprintf(buf, sizeof(buf)-1, "%s: %s", reason, details);
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, buf);
+
+        } else {
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            reason);
+        }
+      }
+ 
+      m++;
+      break;
+    }
+
+    case LOGFMT_META_VHOST_IP:
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        cmd->server->ServerAddress);
+      m++;
+      break;
+
+    case LOGFMT_META_NOTE_VAR:
+      m++;
+      break;
+
+    case LOGFMT_META_XFER_STATUS:
+      m++;
+      break;
+
+    case LOGFMT_META_XFER_FAILURE:
+      m++;
+      break;
+
+    case LOGFMT_META_MICROSECS: {
+      double sess_usecs;
+      struct timeval now;
+
+      gettimeofday(&now, NULL);
+      sess_usecs = now.tv_usec;
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        &sess_usecs);
+
+      m++;
+      break;
+    }
+
+    case LOGFMT_META_MILLISECS: {
+      double sess_msecs;
+      struct timeval now;
+
+      gettimeofday(&now, NULL);
+
+      /* Convert microsecs to millisecs. */
+      sess_msecs = (now.tv_usec / 1000);
+
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        &sess_msecs);
+
+      m++;
+      break;
+    }
+
+    case LOGFMT_META_ISO8601:
+      m++;
+      break;
+
+    case LOGFMT_META_GROUP:
+      if (session.group != NULL) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          session.group);
+      }
+
+      m++;
+      break;
 
     default:
       (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
@@ -539,10 +863,7 @@ MODRET log_zmq_any(cmd_rec *cmd) {
     /* XXX Check log_zmq_payload_fmt for json/msgpack */
     obj = json_mkobject();
 
-    pr_trace_msg(trace_channel, 9, "calling mkrecord() for '%s'", cmd->argv[0]);
     res = log_zmq_mkrecord(cmd->argv[0], cmd, c->argv[1], obj, log_zmq_mkjson);
-    pr_trace_msg(trace_channel, 9, "mkrecord() returned %d for '%s'",
-      res, cmd->argv[0]);
 
     if (!json_check(obj, errstr)) {
       (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
