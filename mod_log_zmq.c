@@ -274,7 +274,7 @@ static int log_zmq_mkfieldtab(pool *p) {
 }
 
 static void log_zmq_mkjson(void *json, const char *field_name,
-    size_t field_namelen, unsigned int field_type, void *field_value) {
+    size_t field_namelen, unsigned int field_type, const void *field_value) {
   JsonNode *field = NULL;
 
   switch (field_type) {
@@ -302,72 +302,147 @@ static void log_zmq_mkjson(void *json, const char *field_name,
 
 static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
     void *obj,
-    void (*mkfield)(void *, const char *, size_t, unsigned int, void *)) {
+    void (*mkfield)(void *, const char *, size_t, unsigned int, const void *)) {
   struct field_info *fi;
-  char buf[PR_TUNABLE_PATH_MAX+1], *ptr = NULL;
   unsigned char *m;
 
   m = (*fmt) + 1;
+
+  fi = pr_table_kget(field_idtab, (const void *) m, sizeof(unsigned char),
+    NULL);
+
   switch (*m) {
+    case LOGFMT_META_ARG: {
+      m++;
+
+      /* XXX How to handle these? */
+      while (*m != LOGFMT_META_ARG_END) {
+        pr_signals_handle();
+      }
+
+      m++;
+      break;
+    }
+
     case LOGFMT_META_BYTES_SENT:
+      if (session.xfer.p) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          &session.xfer.total_bytes);
+
+      } else if (pr_cmd_cmp(cmd, PR_CMD_DELE_ID) == 0) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          &log_zmq_dele_filesz);
+      }
+
+      m++;
       break;
 
     case LOGFMT_META_FILENAME:
+      m++;
       break;
 
     case LOGFMT_META_ENV_VAR:
+      m++;
       break;
 
     case LOGFMT_META_REMOTE_HOST:
+      m++;
       break;
 
     case LOGFMT_META_REMOTE_IP:
+      m++;
       break;
 
     case LOGFMT_META_IDENT_USER:
+      m++;
       break;
 
     case LOGFMT_META_PID:
+      m++;
       break;
 
     case LOGFMT_META_TIME:
+      m++;
       break;
 
     case LOGFMT_META_SECONDS:
+      m++;
       break;
 
     case LOGFMT_META_COMMAND:
+      if (pr_cmd_cmp(cmd, PR_CMD_PASS_ID) == 0 &&
+          session.hide_password) {
+        char *full_cmd = "PASS (hidden)";
+
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          full_cmd);
+
+      } else {
+        char *full_cmd;
+
+        full_cmd = get_full_cmd(cmd);
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          full_cmd);
+      }
+
+      m++;
       break;
 
     case LOGFMT_META_LOCAL_NAME:
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        cmd->server->ServerName);
+      m++;
       break;
 
     case LOGFMT_META_LOCAL_PORT:
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        &(cmd->server->ServerPort));
+      m++;
       break;
 
-    case LOGFMT_META_LOCAL_IP:
-      break;
+    case LOGFMT_META_LOCAL_IP: {
+      const char *ipstr;
 
-    case LOGFMT_META_LOCAL_FQDN:
+      ipstr = pr_netaddr_get_ipstr(pr_netaddr_get_sess_local_addr());
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        ipstr);
+      m++;
       break;
+    }
+
+    case LOGFMT_META_LOCAL_FQDN: {
+      const char *dnsstr;
+
+      dnsstr = pr_netaddr_get_dnsstr(pr_netaddr_get_sess_local_addr());
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+        dnsstr);
+      m++;
+      break;
+    }
 
     case LOGFMT_META_USER:
+      if (session.user != NULL) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          session.user);
+      }
+
+      m++;
       break;
 
     case LOGFMT_META_ORIGINAL_USER:
+      m++;
       break;
 
     case LOGFMT_META_RESPONSE_CODE:
+      m++;
       break;
 
     case LOGFMT_META_CLASS:
+      m++;
       break;
 
     case LOGFMT_META_ANON_PASS: {
       char *anon_pass;
-
-      fi = pr_table_kget(field_idtab, (const void *) m, sizeof(unsigned char),
-        NULL);
 
       anon_pass = pr_table_get(session.notes, "mod_auth.anon-passwd", NULL);
       if (anon_pass == NULL) {
@@ -381,8 +456,31 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
       break;
     }
 
-    case LOGFMT_META_METHOD:
+    case LOGFMT_META_METHOD: {
+      if (pr_cmd_cmp(cmd, PR_CMD_SITE_ID) != 0) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          cmd->argv[0]);
+
+      } else {
+        char buf[32], *ptr;
+
+        /* Make sure that the SITE command used is all in uppercase,
+         * for logging purposes.
+         */
+
+        for (ptr = cmd->argv[1]; *ptr; ptr++) {
+          *ptr = toupper((int) *ptr);
+        }
+
+        memset(buf, '\0', sizeof(buf));
+        snprintf(buf, sizeof(buf)-1, "%s %s", cmd->argv[0], cmd->argv[1]);
+
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, buf);
+      }
+
+      m++;
       break;
+    }
 
     default:
       (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
@@ -390,12 +488,13 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
       break;
   }
 
+  *fmt = m;
   return 0;
 }
 
 static int log_zmq_mkrecord(const char *event_name, cmd_rec *cmd,
     unsigned char *fmt, void *obj,
-    void (*mkfield)(void *, const char *, size_t, unsigned int, void *)) {
+    void (*mkfield)(void *, const char *, size_t, unsigned int, const void *)) {
 
   while (*fmt) {
     pr_signals_handle();
@@ -437,8 +536,13 @@ MODRET log_zmq_any(cmd_rec *cmd) {
 
     c = elts[i];
 
+    /* XXX Check log_zmq_payload_fmt for json/msgpack */
     obj = json_mkobject();
+
+    pr_trace_msg(trace_channel, 9, "calling mkrecord() for '%s'", cmd->argv[0]);
     res = log_zmq_mkrecord(cmd->argv[0], cmd, c->argv[1], obj, log_zmq_mkjson);
+    pr_trace_msg(trace_channel, 9, "mkrecord() returned %d for '%s'",
+      res, cmd->argv[0]);
 
     if (!json_check(obj, errstr)) {
       (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
@@ -544,12 +648,12 @@ MODRET set_logzmqdeliverymode(cmd_rec *cmd) {
 /* usage: LogZMQEndpoint address logfmt-name */
 MODRET set_logzmqendpoint(cmd_rec *cmd) {
   config_rec *c;
-  unsigned char *logfmt = NULL;
+  char *logfmt = NULL;
 
   /* XXX Future enhancement to support <Anonymous>-specific notifying? */
   CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
 
-  CHECK_ARGS(cmd, 2)
+  CHECK_ARGS(cmd, 2);
 
   /* Double-check that logfmt-name is valid, defined, etc. Look up the
    * format string, and stash a pointer to that in the config_rec (but NOT
@@ -562,6 +666,7 @@ MODRET set_logzmqendpoint(cmd_rec *cmd) {
       break;
     }
 
+    logfmt = NULL;
     c = find_config_next(c, c->next, CONF_PARAM, "LogFormat", FALSE);
   }
 
@@ -774,7 +879,7 @@ static int log_zmq_sess_init(void) {
 
     pr_signals_handle();
 
-    addr = c->argv[1];
+    addr = c->argv[0];
     if (zsocket_bind(zsock, addr) < 0) {
       (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
         "error binding to LogZMQEndpoint '%s': %s", addr,
