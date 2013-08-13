@@ -50,6 +50,11 @@ static int log_zmq_delivery_mode = LOG_ZMQ_DELIVERY_MODE_OPTIMISTIC;
 #define LOG_ZMQ_PAYLOAD_FMT_MSGPACK		2
 static int log_zmq_payload_fmt = LOG_ZMQ_PAYLOAD_FMT_JSON;
 
+/* Event flags */
+#define LOG_ZMQ_EVENT_FL_CONNECT		1
+#define LOG_ZMQ_EVENT_FL_REQUEST		2
+#define LOG_ZMQ_EVENT_FL_DISCONNECT		3
+
 static zctx_t *zctx = NULL;
 static void *zsock = NULL;
 static array_header *endpoints = NULL;
@@ -64,6 +69,12 @@ struct field_info {
   const char *field_name;
   size_t field_namelen;
 };
+
+/* The LogFormat "meta" values are in the unsigned char range; for our
+ * specific "meta" values, then, choose something greater than 256.
+ */
+#define LOG_ZMQ_META_CONNECT			427
+#define LOG_ZMQ_META_DISCONNECT			428
 
 #define LOG_ZMQ_FIELD_TYPE_BOOLEAN		1
 #define LOG_ZMQ_FIELD_TYPE_NUMBER		2
@@ -82,27 +93,27 @@ static int field_idcmp(const void *k1, size_t ksz1, const void *k2,
   size_t ksz2) {
 
   /* Return zero to indicate a match, non-zero otherwise. */
-  return (*((unsigned char *) k1) == *((unsigned char *) k2) ? 0 : 1);
+  return (*((unsigned int *) k1) == *((unsigned int *) k2) ? 0 : 1);
 }
 
 /* Key "hash" callback for ID/name table. */
 static unsigned int field_idhash(const void *k, size_t ksz) {
-  unsigned char c;
+  unsigned int c;
   unsigned int res;
 
   memcpy(&c, k, ksz);
-  res = (unsigned int) (c << 8);
+  res = (c << 8);
 
   return res;
 }
 
-static int field_add(pool *p, unsigned char id, const char *name,
+static int field_add(pool *p, unsigned int id, const char *name,
     unsigned int field_type) {
-  unsigned char *k;
+  unsigned int *k;
   struct field_info *fi;
   int res;
 
-  k = palloc(p, sizeof(unsigned char));
+  k = palloc(p, sizeof(unsigned int));
   *k = id;
 
   fi = palloc(p, sizeof(struct field_info));
@@ -110,7 +121,7 @@ static int field_add(pool *p, unsigned char id, const char *name,
   fi->field_name = name;
   fi->field_namelen = strlen(name) + 1;
 
-  res = pr_table_kadd(field_idtab, (const void *) k, sizeof(unsigned char),
+  res = pr_table_kadd(field_idtab, (const void *) k, sizeof(unsigned int),
     fi, sizeof(struct field_info *));
   return res;
 }
@@ -270,6 +281,12 @@ static int log_zmq_mkfieldtab(pool *p) {
   field_add(p, LOGFMT_META_GROUP, "group",
     LOG_ZMQ_FIELD_TYPE_STRING);
 
+  field_add(p, LOG_ZMQ_META_CONNECT, "connecting",
+    LOG_ZMQ_FIELD_TYPE_BOOLEAN);
+
+  field_add(p, LOG_ZMQ_META_DISCONNECT, "disconnecting",
+    LOG_ZMQ_FIELD_TYPE_BOOLEAN);
+
   return 0;
 }
 
@@ -319,15 +336,17 @@ static char *get_meta_arg(pool *p, unsigned char *m, size_t *arglen) {
   return pstrdup(p, buf);
 }
 
-static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
+static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
     void *obj,
     void (*mkfield)(void *, const char *, size_t, unsigned int, const void *)) {
   struct field_info *fi;
   unsigned char *m;
+  unsigned int meta;
 
   m = (*fmt) + 1;
 
-  fi = pr_table_kget(field_idtab, (const void *) m, sizeof(unsigned char),
+  meta = *m;
+  fi = pr_table_kget(field_idtab, (const void *) &meta, sizeof(unsigned int),
     NULL);
 
   switch (*m) {
@@ -469,7 +488,7 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
         mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
           full_cmd);
 
-      } else {
+      } else if (flags == LOG_ZMQ_EVENT_FL_REQUEST) {
         char *full_cmd;
 
         full_cmd = get_full_cmd(cmd);
@@ -587,24 +606,26 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
     }
 
     case LOGFMT_META_METHOD: {
-      if (pr_cmd_cmp(cmd, PR_CMD_SITE_ID) != 0) {
-        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
-          cmd->argv[0]);
+      if (flags == LOG_ZMQ_EVENT_FL_REQUEST) {
+        if (pr_cmd_cmp(cmd, PR_CMD_SITE_ID) != 0) {
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            cmd->argv[0]);
 
-      } else {
-        char buf[32], *ptr;
+        } else {
+          char buf[32], *ptr;
 
-        /* Make sure that the SITE command used is all in uppercase,
-         * for logging purposes.
-         */
-        for (ptr = cmd->argv[1]; *ptr; ptr++) {
-          *ptr = toupper((int) *ptr);
+          /* Make sure that the SITE command used is all in uppercase,
+           * for logging purposes.
+           */
+          for (ptr = cmd->argv[1]; *ptr; ptr++) {
+            *ptr = toupper((int) *ptr);
+          }
+
+          memset(buf, '\0', sizeof(buf));
+          snprintf(buf, sizeof(buf)-1, "%s %s", cmd->argv[0], cmd->argv[1]);
+
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, buf);
         }
-
-        memset(buf, '\0', sizeof(buf));
-        snprintf(buf, sizeof(buf)-1, "%s %s", cmd->argv[0], cmd->argv[1]);
-
-        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, buf);
       }
 
       m++;
@@ -629,7 +650,7 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
 
         mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, params);
 
-      } else if (cmd->argc > 1) {
+      } else if (LOG_ZMQ_EVENT_FL_REQUEST && cmd->argc > 1) {
         const char *params;
 
         params = pr_fs_decode_path(p, cmd->arg);
@@ -1021,12 +1042,41 @@ static int find_next_meta(pool *p, cmd_rec *cmd, unsigned char **fmt,
 static int log_zmq_mkrecord(const char *event_name, cmd_rec *cmd,
     unsigned char *fmt, void *obj,
     void (*mkfield)(void *, const char *, size_t, unsigned int, const void *)) {
+  int flags = LOG_ZMQ_EVENT_FL_REQUEST;
+
+  if (strncmp(event_name, "CONNECT", 11) == 0 &&
+      session.prev_server == NULL) {
+    unsigned int meta = LOG_ZMQ_META_CONNECT;
+    struct field_info *fi;
+    bool connecting = true;
+
+    flags = LOG_ZMQ_EVENT_FL_CONNECT;
+
+    fi = pr_table_kget(field_idtab, (const void *) &meta, sizeof(unsigned int),
+      NULL);
+
+    mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+      &connecting);
+
+  } else if (strncmp(event_name, "DISCONNECT", 14) == 0) {
+    unsigned int meta = LOG_ZMQ_META_DISCONNECT;
+    struct field_info *fi;
+    bool disconnecting = true;
+
+    flags = LOG_ZMQ_EVENT_FL_DISCONNECT;
+
+    fi = pr_table_kget(field_idtab, (const void *) &meta, sizeof(unsigned int),
+      NULL);
+
+    mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+      &disconnecting);
+  }
 
   while (*fmt) {
     pr_signals_handle();
 
     if (*fmt == LOGFMT_META_START) {
-      find_next_meta(cmd->tmp_pool, cmd, &fmt, obj, mkfield);
+      find_next_meta(cmd->tmp_pool, flags, cmd, &fmt, obj, mkfield);
 
     } else {
       fmt++;
@@ -1036,22 +1086,9 @@ static int log_zmq_mkrecord(const char *event_name, cmd_rec *cmd,
   return 0;
 }
 
-/* Command handlers
- */
-
-MODRET log_zmq_any(cmd_rec *cmd) {
+static int log_zmq_log_event(const char *event_name, cmd_rec *cmd) {
   register unsigned int i;
   config_rec **elts;
-
-  if (log_zmq_engine == FALSE) {
-    return PR_DECLINED(cmd);
-  }
-
-  if (endpoints == NULL ||
-      endpoints->nelts == 0) {
-    /* No configured endpoints means no logging work for us to do. */
-    return PR_DECLINED(cmd);
-  }
 
   elts = endpoints->elts;
   for (i = 0; i < endpoints->nelts; i++) {
@@ -1085,6 +1122,26 @@ MODRET log_zmq_any(cmd_rec *cmd) {
     json_delete(obj);
   }
 
+  return 0;
+}
+
+/* Command handlers
+ */
+
+MODRET log_zmq_any(cmd_rec *cmd) {
+  int res;
+
+  if (log_zmq_engine == FALSE) {
+    return PR_DECLINED(cmd);
+  }
+
+  if (endpoints == NULL ||
+      endpoints->nelts == 0) {
+    /* No configured endpoints means no logging work for us to do. */
+    return PR_DECLINED(cmd);
+  }
+
+  res = log_zmq_log_event(cmd->argv[0], cmd);
   return PR_DECLINED(cmd);
 }
 
@@ -1261,7 +1318,10 @@ MODRET set_logzmqlog(cmd_rec *cmd) {
  */
 
 static void log_zmq_exit_ev(const void *event_data, void *user_data) {
-  /* XXX Log EXIT message */
+  cmd_rec *cmd = NULL;
+
+  cmd = pr_cmd_alloc(session.pool, 1, "DISCONNECT");
+  log_zmq_log_event("DISCONNECT", cmd);
 
   if (zctx != NULL) {
     /* Set a lingering timeout for a short time, to ensure that the last
@@ -1302,7 +1362,6 @@ static void log_zmq_restart_ev(const void *event_data, void *user_data) {
 static int log_zmq_init(void) {
   int zmq_major, zmq_minor, zmq_patch;
 
-  pr_event_register(&log_zmq_module, "core.exit", log_zmq_exit_ev, NULL);
 #ifdef PR_SHARED_MODULE
   pr_event_register(&log_zmq_module, "core.module-unload",
     log_zmq_mod_unload_ev, NULL);
@@ -1336,6 +1395,7 @@ static int log_zmq_init(void) {
 
 static int log_zmq_sess_init(void) {
   config_rec *c;
+  cmd_rec *cmd = NULL;
 
   c = find_config(main_server->conf, CONF_PARAM, "LogZMQEngine", FALSE);
   if (c != NULL) {
@@ -1425,6 +1485,11 @@ static int log_zmq_sess_init(void) {
       "no LogZMQEndpoints configured, disabling module");
     log_zmq_engine = FALSE;
   }
+
+  pr_event_register(&log_zmq_module, "core.exit", log_zmq_exit_ev, NULL);
+
+  cmd = pr_cmd_alloc(session.pool, 1, "CONNECT");
+  log_zmq_log_event("CONNECT", cmd);
 
   return 0;
 }
