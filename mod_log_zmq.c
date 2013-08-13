@@ -1039,18 +1039,15 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
   return 0;
 }
 
-static int log_zmq_mkrecord(const char *event_name, cmd_rec *cmd,
+static int log_zmq_mkrecord(int flags, cmd_rec *cmd,
     unsigned char *fmt, void *obj,
     void (*mkfield)(void *, const char *, size_t, unsigned int, const void *)) {
-  int flags = LOG_ZMQ_EVENT_FL_REQUEST;
 
-  if (strncmp(event_name, "CONNECT", 11) == 0 &&
+  if (flags == LOG_ZMQ_EVENT_FL_CONNECT &&
       session.prev_server == NULL) {
     unsigned int meta = LOG_ZMQ_META_CONNECT;
     struct field_info *fi;
     bool connecting = true;
-
-    flags = LOG_ZMQ_EVENT_FL_CONNECT;
 
     fi = pr_table_kget(field_idtab, (const void *) &meta, sizeof(unsigned int),
       NULL);
@@ -1058,12 +1055,10 @@ static int log_zmq_mkrecord(const char *event_name, cmd_rec *cmd,
     mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
       &connecting);
 
-  } else if (strncmp(event_name, "DISCONNECT", 14) == 0) {
+  } else if (flags == LOG_ZMQ_EVENT_FL_DISCONNECT) {
     unsigned int meta = LOG_ZMQ_META_DISCONNECT;
     struct field_info *fi;
     bool disconnecting = true;
-
-    flags = LOG_ZMQ_EVENT_FL_DISCONNECT;
 
     fi = pr_table_kget(field_idtab, (const void *) &meta, sizeof(unsigned int),
       NULL);
@@ -1086,7 +1081,7 @@ static int log_zmq_mkrecord(const char *event_name, cmd_rec *cmd,
   return 0;
 }
 
-static int log_zmq_log_event(const char *event_name, cmd_rec *cmd) {
+static int log_zmq_log_event(cmd_rec *cmd, int flags) {
   register unsigned int i;
   config_rec **elts;
 
@@ -1102,7 +1097,7 @@ static int log_zmq_log_event(const char *event_name, cmd_rec *cmd) {
     /* XXX Check log_zmq_payload_fmt for json/msgpack */
     obj = json_mkobject();
 
-    res = log_zmq_mkrecord(cmd->argv[0], cmd, c->argv[1], obj, log_zmq_mkjson);
+    res = log_zmq_mkrecord(flags, cmd, c->argv[1], obj, log_zmq_mkjson);
 
     if (!json_check(obj, errstr)) {
       (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
@@ -1141,7 +1136,7 @@ MODRET log_zmq_any(cmd_rec *cmd) {
     return PR_DECLINED(cmd);
   }
 
-  res = log_zmq_log_event(cmd->argv[0], cmd);
+  res = log_zmq_log_event(cmd, LOG_ZMQ_EVENT_FL_REQUEST);
   return PR_DECLINED(cmd);
 }
 
@@ -1321,7 +1316,7 @@ static void log_zmq_exit_ev(const void *event_data, void *user_data) {
   cmd_rec *cmd = NULL;
 
   cmd = pr_cmd_alloc(session.pool, 1, "DISCONNECT");
-  log_zmq_log_event("DISCONNECT", cmd);
+  log_zmq_log_event(cmd, LOG_ZMQ_EVENT_FL_DISCONNECT);
 
   if (zctx != NULL) {
     /* Set a lingering timeout for a short time, to ensure that the last
@@ -1489,7 +1484,7 @@ static int log_zmq_sess_init(void) {
   pr_event_register(&log_zmq_module, "core.exit", log_zmq_exit_ev, NULL);
 
   cmd = pr_cmd_alloc(session.pool, 1, "CONNECT");
-  log_zmq_log_event("CONNECT", cmd);
+  log_zmq_log_event(cmd, LOG_ZMQ_EVENT_FL_CONNECT);
 
   return 0;
 }
