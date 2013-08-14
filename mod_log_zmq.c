@@ -1277,6 +1277,15 @@ MODRET set_logzmqengine(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
+/* usage: LogZMQLog path|"none" */
+MODRET set_logzmqlog(cmd_rec *cmd) {
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+  CHECK_ARGS(cmd, 1);
+
+  add_config_param_str(cmd->argv[0], 1, cmd->argv[1]);
+  return PR_HANDLED(cmd);
+}
+
 /* usage: LogZMQMessageFormat json */
 MODRET set_logzmqmessageformat(cmd_rec *cmd) {
   int payload_fmt = 0;
@@ -1297,15 +1306,6 @@ MODRET set_logzmqmessageformat(cmd_rec *cmd) {
   c->argv[0] = pcalloc(c->pool, sizeof(int));
   *((int *) c->argv[0]) = payload_fmt;
 
-  return PR_HANDLED(cmd);
-}
-
-/* usage: LogZMQLog path|"none" */
-MODRET set_logzmqlog(cmd_rec *cmd) {
-  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
-  CHECK_ARGS(cmd, 1);
-
-  add_config_param_str(cmd->argv[0], 1, cmd->argv[1]);
   return PR_HANDLED(cmd);
 }
 
@@ -1496,8 +1496,8 @@ static conftable log_zmq_conftab[] = {
   { "LogZMQDeliveryMode",	set_logzmqdeliverymode,		NULL },
   { "LogZMQEndpoint",		set_logzmqendpoint,		NULL },
   { "LogZMQEngine",		set_logzmqengine,		NULL },
-  { "LogZMQMessageFormat",	set_logzmqmessageformat,	NULL },
   { "LogZMQLog",		set_logzmqlog,			NULL },
+  { "LogZMQMessageFormat",	set_logzmqmessageformat,	NULL },
 
   { NULL }
 };

@@ -1,0 +1,164 @@
+<html>
+<head>
+<title>ProFTPD module mod_log_zmq</title>
+</head>
+
+<body bgcolor=white>
+
+<hr>
+<center>
+<h2><b>ProFTPD module <code>mod_log_zmq</code></b></h2>
+</center>
+<hr><br>
+
+This module is contained in the <code>mod_log_zmq.c</code> file for
+ProFTPD 1.3.<i>x</i>, and is not compiled by default.  Installation
+instructions are discussed <a href="#Installation">here</a>.
+
+<p>
+The purpose of the <code>mod_log_zmq</code> module is to
+
+<p>
+The <code>mod_log_zmq</code> module uses the <code>zmq</code> and
+<code>czmq</code> libraries from ...
+
+<p>
+The most current version of <code>mod_log_zmq</code> can be found at:
+<pre>
+  <a href="https://github.com/Castaglia/proftpd-mod_log_zmq.git">https://github.com/Castaglia/proftpd-mod_log_zmq.git</a>
+</pre>
+
+<h2>Author</h2>
+<p>
+Please contact TJ Saunders &lt;tj <i>at</i> castaglia.org&gt; with any
+questions, concerns, or suggestions regarding this module.
+
+<h2>Directives</h2>
+<ul>
+  <li><a href="#LogZMQDeliveryMode">LogZMQDeliveryMode</a>
+  <li><a href="#LogZMQEndpoint">LogZMQEndpoint</a>
+  <li><a href="#LogZMQEngine">LogZMQEngine</a>
+  <li><a href="#LogZMQLog">LogZMQLog</a>
+  <li><a href="#LogZMQMessageFormat">LogZMQMessageFormat</a>
+</ul>
+
+<p>
+<hr>
+<h2><a name="LogZMQDeliveryMode">LogZMQDeliveryMode</a></h2>
+<strong>Syntax:</strong> LogZMQDeliveryMode <em>"optimistic"|"guaranteed"</em><br>
+<strong>Default:</strong> <em>optimistic</em><br>
+<strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
+<strong>Module:</strong> mod_log_zmq<br>
+<strong>Compatibility:</strong> 1.3.5rc4 and later
+
+<p>
+The <code>LogZMQDeliveryMode</code> directive
+
+<p>
+<hr>
+<h2><a name="LogZMQEndpoint">LogZMQEndpoint</a></h2>
+<strong>Syntax:</strong> LogZMQEndpoint <em>address format-name</em><br>
+<strong>Default:</strong> None<br>
+<strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
+<strong>Module:</strong> mod_log_zmq<br>
+<strong>Compatibility:</strong> 1.3.5rc4 and later
+
+<p>
+The <code>LogZMQEndpoint</code> directive
+
+<p>
+<hr>
+<h2><a name="LogZMQEngine">LogZMQEngine</a></h2>
+<strong>Syntax:</strong> LogZMQEngine <em>on|off</em><br>
+<strong>Default:</strong> None<br>
+<strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
+<strong>Module:</strong> mod_log_zmq<br>
+<strong>Compatibility:</strong> 1.3.5rc4 and later
+
+<p>
+The <code>LogZMQEngine</code> directive is used to specify a log file for
+<code>mod_sql</code> reporting and debugging, and can be done a per-server
+basis.  The <em>file</em> parameter must be the full path to the file to use for
+logging.
+
+<p>
+If <em>file</em> is &quot;none&quot;, no logging will be done at all; this
+setting can be used to override a <code>LogZMQLog</code> setting inherited from
+a <code>&lt;Global&gt;</code> context.
+
+<p>
+<hr>
+<h2><a name="LogZMQLog">LogZMQLog</a></h2>
+<strong>Syntax:</strong> LogZMQLog <em>file|"none"</em><br>
+<strong>Default:</strong> None<br>
+<strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
+<strong>Module:</strong> mod_log_zmq<br>
+<strong>Compatibility:</strong> 1.3.5rc4 and later
+
+<p>
+The <code>LogZMQLog</code> directive is used to specify a log file for
+<code>mod_log_zmq</code>'s reporting on a per-server basis.  The <em>file</em>
+parameter given must be the full path to the file to use for logging.
+
+<p>
+<hr>
+<h2><a name="LogZMQMessageFormat">LogZMQMessageFormat</a></h2>
+<strong>Syntax:</strong> LogZMQMessageFormat <em>"json"</em><br>
+<strong>Default:</strong> <em>json</em><br>
+<strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
+<strong>Module:</strong> mod_log_zmq<br>
+<strong>Compatibility:</strong> 1.3.5rc4 and later
+
+<p>
+The <code>LogZMQMessageFormat</code> directive
+
+
+<p>
+<hr>
+<h2><a name="Installation">Installation</a></h2>
+To install <code>mod_log_zmq</code>, go to the third-party module area in
+the proftpd source code and unpack the <code>mod_log_zmq</code> source tarball:
+<pre>
+  cd <i>proftpd-dir</i>/contrib/
+  tar zxvf /path/to/mod_log_zmq-<i>version</i>.tar.gz
+</pre>
+after unpacking the latest proftpd-1.3.4 (or later) source code.  For including
+<code>mod_log_zmq</code> as a staticly linked module:
+<pre>
+  ./configure --with-modules=mod_log_zmq --with-in...
+</pre>
+Alternatively, <code>mod_log_zmq</code> can be built as a DSO module:
+<pre>
+  ./configure --enable-dso --with-shared=mod_log_zmq ...
+</pre>
+
+<p>
+You will also need to tell <code>configure</code> how to find the ZeroMQ
+libraries and header files:
+<pre>
+  ./configure --with-modules=mod_log_zmq \
+    --with-includes=<i>/path/to/zmq/include:/path/to/czmq/include \
+    --with-libraries=<i>/path/to/zmq/lib:/path/to/czmq/lib</i>
+</pre>
+
+<p>
+Then follow the usual steps:
+<pre>
+  make
+  make install
+</pre>
+
+<p>
+<hr>
+Author: <i>$Author: tj $</i><br>
+<hr>
+
+<font size=2><b><i>
+&copy; Copyright 2013 TJ Saunders<br>
+ All Rights Reserved<br>
+</i></b></font>
+
+<hr>
+</body>
+</html>
+
