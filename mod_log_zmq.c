@@ -1081,40 +1081,77 @@ static int log_zmq_mkrecord(int flags, cmd_rec *cmd,
   return 0;
 }
 
+static int log_zmq_mkrecord_json(int flags, cmd_rec *cmd, unsigned char *fmt,
+    char **payload) {
+  int res;
+  char errstr[256];
+  void *obj = NULL;
+
+  /* Note: if JSON code runs out of memory, it will call exit(3); we need to
+   * enable it to interact with proftpd's exiting/error handling.  Maybe
+   * set an OOM handler which, in our case, raises SIGSEGV?
+   */
+
+  obj = json_mkobject();
+
+  res = log_zmq_mkrecord(flags, cmd, fmt, obj, log_zmq_mkjson);
+
+  if (!json_check(obj, errstr)) {
+    (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+      "JSON structural problems: %s", errstr);
+    errno = EINVAL;
+
+    json_delete(obj);
+    return -1;
+  }
+
+  *payload = json_encode(obj);
+  pr_trace_msg(trace_channel, 3, "generated JSON payload: %s", *payload);
+
+  json_delete(obj);
+  return 0;
+}
+
+static int log_zmq_mkrecord_msgpack(int flags, cmd_rec *cmd, unsigned char *fmt,
+    char **payload) {
+  errno = ENOSYS;
+  return -1;
+}
+
 static int log_zmq_log_event(cmd_rec *cmd, int flags) {
   register unsigned int i;
   config_rec **elts;
 
   elts = endpoints->elts;
   for (i = 0; i < endpoints->nelts; i++) {
-    char errstr[256];
     config_rec *c;
     int res;
-    void *obj = NULL;
+    char *payload = NULL;
+
+    pr_signals_handle();
 
     c = elts[i];
 
-    /* XXX Check log_zmq_payload_fmt for json/msgpack */
-    obj = json_mkobject();
+    switch (log_zmq_payload_fmt) {
+      case LOG_ZMQ_PAYLOAD_FMT_JSON:
+        res = log_zmq_mkrecord_json(flags, cmd, c->argv[1], &payload);
+        break;
 
-    res = log_zmq_mkrecord(flags, cmd, c->argv[1], obj, log_zmq_mkjson);
-
-    if (!json_check(obj, errstr)) {
-      (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
-        "JSON structural problems: %s", errstr);
-
-    } else {
-      char *payload;
-
-      payload = json_encode(obj);
-
-      (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
-        "generated payload: '%s'", payload);
-
-      /* XXX send payload via socket */
+      case LOG_ZMQ_PAYLOAD_FMT_MSGPACK:
+        res = log_zmq_mkrecord_msgpack(flags, cmd, c->argv[1], &payload);
+        break;
     }
 
-    json_delete(obj);
+    if (res < 0) {
+      (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+        "error generating %s payload: %s",
+          log_zmq_payload_fmt == LOG_ZMQ_PAYLOAD_FMT_JSON ?
+            "JSON" : "MessagePack", strerror(errno));
+
+      continue;
+    }
+
+    /* XXX send payload via socket */
   }
 
   return 0;
