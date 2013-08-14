@@ -45,7 +45,7 @@ pool *log_zmq_pool = NULL;
 #define LOG_ZMQ_DELIVERY_MODE_GUARANTEED	2
 static int log_zmq_delivery_mode = LOG_ZMQ_DELIVERY_MODE_OPTIMISTIC;
 
-/* Format values */
+/* Message/payload format values */
 #define LOG_ZMQ_PAYLOAD_FMT_JSON		1
 #define LOG_ZMQ_PAYLOAD_FMT_MSGPACK		2
 static int log_zmq_payload_fmt = LOG_ZMQ_PAYLOAD_FMT_JSON;
@@ -1277,8 +1277,8 @@ MODRET set_logzmqengine(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
-/* usage: LogZMQFormat json */
-MODRET set_logzmqformat(cmd_rec *cmd) {
+/* usage: LogZMQMessageFormat json */
+MODRET set_logzmqmessageformat(cmd_rec *cmd) {
   int payload_fmt = 0;
   config_rec *c;
 
@@ -1289,7 +1289,7 @@ MODRET set_logzmqformat(cmd_rec *cmd) {
     payload_fmt = LOG_ZMQ_PAYLOAD_FMT_JSON;
 
   } else {
-    CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, "unsupported payload format: '",
+    CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, "unsupported message format: '",
       cmd->argv[1], "'", NULL));
   }
 
@@ -1493,11 +1493,11 @@ static int log_zmq_sess_init(void) {
  */
 
 static conftable log_zmq_conftab[] = {
-  { "LogZMQDeliveryMode",	set_logzmqdeliverymode,	NULL },
-  { "LogZMQEndpoint",		set_logzmqendpoint,	NULL },
-  { "LogZMQEngine",		set_logzmqengine,	NULL },
-  { "LogZMQFormat",		set_logzmqformat,	NULL },
-  { "LogZMQLog",		set_logzmqlog,		NULL },
+  { "LogZMQDeliveryMode",	set_logzmqdeliverymode,		NULL },
+  { "LogZMQEndpoint",		set_logzmqendpoint,		NULL },
+  { "LogZMQEngine",		set_logzmqengine,		NULL },
+  { "LogZMQMessageFormat",	set_logzmqmessageformat,	NULL },
+  { "LogZMQLog",		set_logzmqlog,			NULL },
 
   { NULL }
 };
