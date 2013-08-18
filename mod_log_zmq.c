@@ -88,6 +88,12 @@ static const char *trace_channel = "log_zmq";
 /* Necessary prototypes */
 static int log_zmq_sess_init(void);
 
+/* Out-of-memory handling. */
+static void log_zmq_oom(void) {
+  pr_log_pri(PR_LOG_CRIT, MOD_LOG_ZMQ_VERSION ": Out of memory!");
+  _exit(1);
+}
+
 /* Key comparison for the ID/name table. */
 static int field_idcmp(const void *k1, size_t ksz1, const void *k2,
   size_t ksz2) {
@@ -1081,10 +1087,10 @@ static int log_zmq_mkrecord(int flags, cmd_rec *cmd,
   return 0;
 }
 
-static int log_zmq_mkrecord_json(int flags, cmd_rec *cmd, unsigned char *fmt,
-    char **payload) {
+static int log_zmq_mkrecord_json(pool *p, int flags, cmd_rec *cmd,
+    unsigned char *fmt, char **payload, size_t *payload_len) {
   int res;
-  char errstr[256];
+  char errstr[256], *json = NULL;
   void *obj = NULL;
 
   /* Note: if JSON code runs out of memory, it will call exit(3); we need to
@@ -1105,17 +1111,82 @@ static int log_zmq_mkrecord_json(int flags, cmd_rec *cmd, unsigned char *fmt,
     return -1;
   }
 
-  *payload = json_encode(obj);
+  json = json_encode(obj);
+  *payload = pstrdup(p, json);
+  *payload_len = strlen(*payload);
   pr_trace_msg(trace_channel, 3, "generated JSON payload: %s", *payload);
 
+  /* To avoid a memory leak via malloc(3), we have to explicitly call free(3)
+   * on the returned JSON string.  Which is why we duplicate it out of the
+   * given memory pool, for use outside of this function.
+   */
+  free(json);
   json_delete(obj);
+
   return 0;
 }
 
-static int log_zmq_mkrecord_msgpack(int flags, cmd_rec *cmd, unsigned char *fmt,
-    char **payload) {
+static int log_zmq_mkrecord_msgpack(pool *p, int flags, cmd_rec *cmd,
+    unsigned char *fmt, char **payload, size_t *payload_len) {
   errno = ENOSYS;
   return -1;
+}
+
+static int log_zmq_send_msg(const char *addr, char *payload,
+    size_t payload_len) {
+  int res = 0;
+  zmsg_t *msg = NULL;
+
+  /* Message framing?
+   *
+   * Fluentd style:
+   *  tag (topic name/prefix)
+   *  timestamp (format?)
+   *    According to:
+   *      http://www.ruby-doc.org/core-2.0/Time.html
+   *
+   *    It looks like the format is (strftime(3) pattern):
+   *      "%Y-%m-%d %H:%M:%S %z" 
+   *
+   *    e.g.: "2012-11-10 18:16:12 +0100"
+   *
+   *  payload
+   *
+   * 0MQ Guide: Pub-Sub Message Envelopes:
+   *  http://zguide.zeromq.org/page:all#Pub-Sub-Message-Envelopes  
+   *
+   *  tag/topic name
+   *  sender address
+   *  payload
+   */
+
+  msg = zmsg_new();
+  if (msg == NULL) {
+    (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+      "error allocating message for LogZMQEndpoint '%s': %s", addr,
+      zmq_strerror(zmq_errno()));
+    return -1;
+  }
+
+  res = zmsg_addmem(msg, payload, payload_len);
+  if (res < 0) {
+    (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+      "error adding payload to message for LogZMQEndpoint '%s': %s", addr,
+      zmq_strerror(zmq_errno()));
+    zmsg_destroy(&msg);
+
+    return -1;
+  }
+
+  res = zmsg_send(&msg, zsock);
+  if (res < 0) {
+    (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+      "error sending message to LogZMQEndpoint '%s': %s", addr,
+      zmq_strerror(zmq_errno()));
+    zmsg_destroy(&msg);
+  }
+
+  return res;
 }
 
 static int log_zmq_log_event(cmd_rec *cmd, int flags) {
@@ -1127,6 +1198,7 @@ static int log_zmq_log_event(cmd_rec *cmd, int flags) {
     config_rec *c;
     int res;
     char *payload = NULL;
+    size_t payload_len = 0;
 
     pr_signals_handle();
 
@@ -1134,11 +1206,13 @@ static int log_zmq_log_event(cmd_rec *cmd, int flags) {
 
     switch (log_zmq_payload_fmt) {
       case LOG_ZMQ_PAYLOAD_FMT_JSON:
-        res = log_zmq_mkrecord_json(flags, cmd, c->argv[1], &payload);
+        res = log_zmq_mkrecord_json(cmd->tmp_pool, flags, cmd, c->argv[1],
+          &payload, &payload_len);
         break;
 
       case LOG_ZMQ_PAYLOAD_FMT_MSGPACK:
-        res = log_zmq_mkrecord_msgpack(flags, cmd, c->argv[1], &payload);
+        res = log_zmq_mkrecord_msgpack(cmd->tmp_pool, flags, cmd, c->argv[1],
+          &payload, &payload_len);
         break;
     }
 
@@ -1148,10 +1222,13 @@ static int log_zmq_log_event(cmd_rec *cmd, int flags) {
           log_zmq_payload_fmt == LOG_ZMQ_PAYLOAD_FMT_JSON ?
             "JSON" : "MessagePack", strerror(errno));
 
+      payload = NULL;
+      payload_len = 0;
       continue;
     }
 
-    /* XXX send payload via socket */
+    /* Send payload via ZMQ */
+    log_zmq_send_msg(c->argv[0], payload, payload_len);
   }
 
   return 0;
@@ -1323,6 +1400,13 @@ MODRET set_logzmqlog(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
+/* usage: LogZMQMessageEnvelope ... */
+MODRET set_logzmqmessageenvelope(cmd_rec *cmd) {
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+
+  return PR_HANDLED(cmd);
+}
+
 /* usage: LogZMQMessageFormat json */
 MODRET set_logzmqmessageformat(cmd_rec *cmd) {
   int payload_fmt = 0;
@@ -1421,6 +1505,9 @@ static int log_zmq_init(void) {
   if (log_zmq_mkfieldtab(log_zmq_pool) < 0) {
     return -1;
   }
+
+  /* Use our own OOM handler. */
+  json_set_oom(log_zmq_oom);
 
   return 0;
 }
@@ -1534,6 +1621,7 @@ static conftable log_zmq_conftab[] = {
   { "LogZMQEndpoint",		set_logzmqendpoint,		NULL },
   { "LogZMQEngine",		set_logzmqengine,		NULL },
   { "LogZMQLog",		set_logzmqlog,			NULL },
+  { "LogZMQMessageEnvelope",	set_logzmqmessageenvelope,	NULL },
   { "LogZMQMessageFormat",	set_logzmqmessageformat,	NULL },
 
   { NULL }
