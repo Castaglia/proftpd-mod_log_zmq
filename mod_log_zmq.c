@@ -63,7 +63,6 @@ static pr_table_t *field_idtab = NULL;
 /* Entries in the field table identify the field name, and the data type:
  * Boolean, number, or string.
  */
-
 struct field_info {
   unsigned int field_type;
   const char *field_name;
@@ -79,6 +78,11 @@ struct field_info {
 #define LOG_ZMQ_FIELD_TYPE_BOOLEAN		1
 #define LOG_ZMQ_FIELD_TYPE_NUMBER		2
 #define LOG_ZMQ_FIELD_TYPE_STRING		3
+
+struct zsockopt {
+  int opt;
+  int val;
+};
 
 /* For tracking the size of deleted files. */
 static off_t log_zmq_dele_filesz = 0;
@@ -1112,9 +1116,11 @@ static int log_zmq_mkrecord_json(pool *p, int flags, cmd_rec *cmd,
   }
 
   json = json_encode(obj);
-  *payload = pstrdup(p, json);
-  *payload_len = strlen(*payload);
-  pr_trace_msg(trace_channel, 3, "generated JSON payload: %s", *payload);
+  pr_trace_msg(trace_channel, 3, "generated JSON payload: %s", json);
+
+  *payload_len = strlen(json);
+  *payload = palloc(p, *payload_len);
+  memcpy(*payload, json, *payload_len);
 
   /* To avoid a memory leak via malloc(3), we have to explicitly call free(3)
    * on the returned JSON string.  Which is why we duplicate it out of the
@@ -1132,39 +1138,47 @@ static int log_zmq_mkrecord_msgpack(pool *p, int flags, cmd_rec *cmd,
   return -1;
 }
 
+/* Message framing?
+ *
+ * Fluentd style:
+ *  tag (topic name/prefix)
+ *  timestamp (format?)
+ *    According to:
+ *      http://www.ruby-doc.org/core-2.0/Time.html
+ *
+ *    It looks like the format is (strftime(3) pattern):
+ *      "%Y-%m-%d %H:%M:%S %z" 
+ *
+ *    e.g.: "2012-11-10 18:16:12 +0100"
+ *
+ *  payload
+ *
+ * 0MQ Guide: Pub-Sub Message Envelopes:
+ *  http://zguide.zeromq.org/page:all#Pub-Sub-Message-Envelopes  
+ *
+ *  tag/topic name
+ *  sender address
+ *  payload
+ */
+static int log_zmq_add_msg_envelope(zmsg_t **msg) {
+  return 0;
+}
+
 static int log_zmq_send_msg(const char *addr, char *payload,
     size_t payload_len) {
   int res = 0;
   zmsg_t *msg = NULL;
-
-  /* Message framing?
-   *
-   * Fluentd style:
-   *  tag (topic name/prefix)
-   *  timestamp (format?)
-   *    According to:
-   *      http://www.ruby-doc.org/core-2.0/Time.html
-   *
-   *    It looks like the format is (strftime(3) pattern):
-   *      "%Y-%m-%d %H:%M:%S %z" 
-   *
-   *    e.g.: "2012-11-10 18:16:12 +0100"
-   *
-   *  payload
-   *
-   * 0MQ Guide: Pub-Sub Message Envelopes:
-   *  http://zguide.zeromq.org/page:all#Pub-Sub-Message-Envelopes  
-   *
-   *  tag/topic name
-   *  sender address
-   *  payload
-   */
 
   msg = zmsg_new();
   if (msg == NULL) {
     (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
       "error allocating message for LogZMQEndpoint '%s': %s", addr,
       zmq_strerror(zmq_errno()));
+    return -1;
+  }
+
+  if (log_zmq_add_msg_envelope(&msg) < 0) {
+    zmsg_destroy(&msg);
     return -1;
   }
 
@@ -1430,6 +1444,49 @@ MODRET set_logzmqmessageformat(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
+/* usage: LogZMQOptions ... */
+MODRET set_logzmqoptions(cmd_rec *cmd) {
+  register unsigned int i;
+  config_rec *c;
+  unsigned int nopts = 0, opti = 0;
+
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+
+  nopts = (cmd->argc-1) / 2;
+
+  if (cmd->argc < 3 ||
+      cmd->argc > 5 ||
+      (cmd->argc-1) % 2 != 0) {
+    CONF_ERROR(cmd, "wrong number of parameters");
+  }
+
+  c = add_config_param(cmd->argv[0], nopts, NULL, NULL);
+
+  for (i = 1; i < cmd->argc-1; i += 2) {
+    struct zsockopt *so;
+
+    so = palloc(c->pool, sizeof(struct zsockopt));
+    if (strcasecmp(cmd->argv[i], "MaxPendingMessages") == 0) {
+      so->opt = ZMQ_SNDHWM;
+      so->val = atoi(cmd->argv[i+1]);
+
+    } else if (strcasecmp(cmd->argv[i], "Timeout") == 0) {
+      so->opt = ZMQ_SNDTIMEO;
+      so->val = atoi(cmd->argv[i+1]);
+
+      /* Note: zmq_setsockopt(ZMQ_SNDTIMEO) expects millisecs. */
+
+    } else {
+      CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, "unknown LogZMQOption: '",
+        cmd->argv[i], "'", NULL));
+    }
+
+    c->argv[opti++] = so;
+  }
+
+  return PR_HANDLED(cmd);
+}
+
 /* Event listeners
  */
 
@@ -1574,6 +1631,42 @@ static int log_zmq_sess_init(void) {
     return 0;
   }
 
+#ifdef PR_USE_IPV6
+if (pr_netaddr_use_ipv6()) {
+  int ipv4_only = 0;
+
+  /* Enable IPv6 ZMQ sockets. */
+  if (zmq_setsockopt(zsock, ZMQ_IPV4ONLY, &ipv4_only, sizeof(int)) < 0) {
+    (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+      "error setting IPV4ONLY option to 'false': %s",
+      zmq_strerror(zmq_errno()));
+  }
+}
+#endif /* PR_USE_IPV6 */
+
+  /* Look up LogZMQOptions, apply the socket options to our socket. */
+  c = find_config(main_server->conf, CONF_PARAM, "LogZMQOptions", FALSE);
+  while (c != NULL) {
+    register unsigned int i;
+
+    pr_signals_handle();
+
+    for (i = 0; i < c->argc; i++) {
+      struct zsockopt *so;
+
+      so = c->argv[i];
+ 
+      if (zmq_setsockopt(zsock, so->opt, &(so->val), sizeof(int)) < 0) {
+        (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+          "error setting %s option to %d: %s",
+          so->opt == ZMQ_SNDHWM ? "MaxPendingMessages" : "Timeout",
+          so->val, zmq_strerror(zmq_errno()));
+      }
+    }
+
+    c = find_config_next(c, c->next, CONF_PARAM, "LogZMQOptions", FALSE);
+  }
+
   /* Look up LogZMQEndpoint directives, bind socket to those addresses */
   c = find_config(main_server->conf, CONF_PARAM, "LogZMQEndpoint", FALSE);
   while (c != NULL) {
@@ -1623,6 +1716,7 @@ static conftable log_zmq_conftab[] = {
   { "LogZMQLog",		set_logzmqlog,			NULL },
   { "LogZMQMessageEnvelope",	set_logzmqmessageenvelope,	NULL },
   { "LogZMQMessageFormat",	set_logzmqmessageformat,	NULL },
+  { "LogZMQOptions",		set_logzmqoptions,		NULL },
 
   { NULL }
 };
