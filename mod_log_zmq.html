@@ -194,6 +194,228 @@ Example configuration:
   &lt;/IfModule&gt;
 </pre>
 
+<p><a name="VariableKeys">
+<b><code>LogFormat</code> Variable Keys</b><br>
+
+<table border=1>
+  <tr>
+    <td><b><code>LogFormat</code> Variable</b></td>
+    <td><b>Key</b></td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%A</code>&nbsp;</td>
+    <td>anon_password</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%a</code>&nbsp;</td>
+    <td>remote_ip</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%b</code>&nbsp;</td>
+    <td>bytes_sent</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%c</code>&nbsp;</td>
+    <td>connection_class</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%D</code>&nbsp;</td>
+    <td>dir_path</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%d</code>&nbsp;</td>
+    <td>dir_name</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%E</code>&nbsp;</td>
+    <td>session_end_reason</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%{<em>name</em>}e</code>&nbsp;</td>
+    <td>ENV:<em>name</em></td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%F</code>&nbsp;</td>
+    <td>transfer_path</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%f</code>&nbsp;</td>
+    <td>file</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%{file-modified}</code>&nbsp;</td>
+    <td>file_modified</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%g</code>&nbsp;</td>
+    <td>group</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%{gid}</code>&nbsp;</td>
+    <td>gid</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%H</code>&nbsp;</td>
+    <td>server_ip</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%h</code>&nbsp;</td>
+    <td>remote_dns</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%I</code>&nbsp;</td>
+    <td>session_bytes_rcvd</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%{iso8601}</code>&nbsp;</td>
+    <td>timestamp</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%J</code>&nbsp;</td>
+    <td>command_params</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%L</code>&nbsp;</td>
+    <td>local_ip</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%l</code>&nbsp;</td>
+    <td>identd_user</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%m</code>&nbsp;</td>
+    <td>command</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%{microsecs}</code>&nbsp;</td>
+    <td>microsecs</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%{millisecs}</code>&nbsp;</td>
+    <td>millisecs</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%{note:<em>name</em>}</code>&nbsp;</td>
+    <td>NOTE:<em>name</em></td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%O</code>&nbsp;</td>
+    <td>session_bytes_sent</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%P</code>&nbsp;</td>
+    <td>pid</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%p</code>&nbsp;</td>
+    <td>local_port</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%{protocol}</code>&nbsp;</td>
+    <td>protocol</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%r</code>&nbsp;</td>
+    <td>raw_command</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%S</code>&nbsp;</td>
+    <td>response_msg</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%s</code>&nbsp;</td>
+    <td>response_code</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%T</code>&nbsp;</td>
+    <td>transfer_secs</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%t</code>&nbsp;</td>
+    <td>local_time</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%{transfer-failure}</code>&nbsp;</td>
+    <td>transfer_failure</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%{transfer-status}</code>&nbsp;</td>
+    <td>transfer_status</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%U</code>&nbsp;</td>
+    <td>original_user</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%u</code>&nbsp;</td>
+    <td>user</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%{uid}</code>&nbsp;</td>
+    <td>uid</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%V</code>&nbsp;</td>
+    <td>server_dns</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%v</code>&nbsp;</td>
+    <td>server_name</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%{version}</code>&nbsp;</td>
+    <td>server_version</td>
+  </tr>
+
+  <tr>
+    <td>&nbsp;<code>%w</code>&nbsp;</td>
+    <td>rename_from</td>
+  </tr>
+</table>
+
+connecting/disconnecting (boolean)
+
 <p>
 <hr>
 Author: <i>$Author: tj $</i><br>

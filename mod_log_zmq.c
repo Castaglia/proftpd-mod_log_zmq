@@ -378,6 +378,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
       break;
 
     case LOGFMT_META_FILENAME:
+      /* XXX */
       m++;
       break;
 
@@ -452,6 +453,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
     }
 
     case LOGFMT_META_TIME:
+      /* XXX */
       m++;
       break;
 
@@ -641,14 +643,95 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
     }
 
     case LOGFMT_META_XFER_PATH:
+      /* XXX */
       m++;
       break;
 
     case LOGFMT_META_DIR_NAME:
+      if (pr_cmd_cmp(cmd, PR_CMD_CDUP_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_CWD_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_LIST_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_MLSD_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_MKD_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_NLST_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_RMD_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_XCWD_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_XCUP_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_XMKD_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_XRMD_ID) == 0) {
+        char *path, *tmp;
+
+        path = pr_fs_decode_path(p, cmd->arg);
+        tmp = strrchr(path, '/');
+
+        if (tmp != NULL) {
+          if (tmp != path) {
+            mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+              tmp + 1);
+
+          } else if (*(tmp+1) != '\0') {
+            mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+              tmp + 1);
+
+          } else {
+            mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+              path);
+          }
+
+        } else {
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, path);
+        }
+
+      } else {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          pr_fs_getvwd());
+      }
+
       m++;
       break;
 
     case LOGFMT_META_DIR_PATH:
+      if (pr_cmd_cmp(cmd, PR_CMD_CDUP_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_LIST_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_MLSD_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_MKD_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_NLST_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_RMD_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_XCUP_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_XMKD_ID) == 0 ||
+          pr_cmd_cmp(cmd, PR_CMD_XRMD_ID) == 0) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          dir_abs_path(p, pr_fs_decode_path(p, cmd->arg), TRUE));
+
+      } else if (pr_cmd_cmp(cmd, PR_CMD_CWD_ID) == 0 ||
+                 pr_cmd_cmp(cmd, PR_CMD_XCWD_ID) == 0) {
+
+        /* Note: by this point in the dispatch cycle, the current working
+         * directory has already been changed.  For the CWD/XCWD commands,
+         * this means that dir_abs_path() may return an improper path,
+         * with the target directory being reported twice.  To deal with this,
+         * don't use dir_abs_path(), and use pr_fs_getvwd()/pr_fs_getcwd()
+         * instead.
+         */
+
+        if (session.chroot_path) {
+          /* Chrooted session. */
+          if (strncmp(pr_fs_getvwd(), "/", 2) == 0) {
+            mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+              session.chroot_path);
+
+          } else {
+            mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+              pdircat(p, session.chroot_path, pr_fs_getvwd(), NULL));
+          }
+
+        } else {
+          /* Non-chrooted session. */
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            pr_fs_getcwd());
+        }
+      }
+
       m++;
       break;
 
@@ -668,9 +751,20 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
       m++;
       break;
 
-    case LOGFMT_META_RESPONSE_STR:
+    case LOGFMT_META_RESPONSE_STR: {
+      char *resp_msg = NULL;
+      int res;
+
+      res = pr_response_get_last(p, NULL, &resp_msg);
+      if (res == 0 &&
+          resp_msg != NULL) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          resp_msg);
+      }
+
       m++;
       break;
+    }
 
     case LOGFMT_META_PROTOCOL: {
       const char *proto;
