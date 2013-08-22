@@ -378,7 +378,108 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
       break;
 
     case LOGFMT_META_FILENAME:
-      /* XXX */
+      if (pr_cmd_cmp(cmd, PR_CMD_RNTO_ID) == 0) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          dir_abs_path(p, pr_fs_decode_path(p, cmd->arg), TRUE));
+
+      } else if (pr_cmd_cmp(cmd, PR_CMD_RETR_ID) == 0) {
+        char *path;
+
+        path = pr_table_get(cmd->notes, "mod_xfer.retr-path", NULL);
+        if (path != NULL) {
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            dir_abs_path(p, path, TRUE));
+        }
+
+      } else if (pr_cmd_cmp(cmd, PR_CMD_APPE_ID) == 0 ||
+                 pr_cmd_cmp(cmd, PR_CMD_STOR_ID) == 0) {
+        char *path;
+
+        path = pr_table_get(cmd->notes, "mod_xfer.store-path", NULL);
+        if (path != NULL) {
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            dir_abs_path(p, path, TRUE));
+        }
+
+      } else if (session.xfer.p &&
+                 session.xfer.path) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            dir_abs_path(p, session.xfer.path, TRUE));
+
+      } else if (pr_cmd_cmp(cmd, PR_CMD_CDUP_ID) == 0 ||
+                 pr_cmd_cmp(cmd, PR_CMD_PWD_ID) == 0 ||
+                 pr_cmd_cmp(cmd, PR_CMD_XCUP_ID) == 0 ||
+                 pr_cmd_cmp(cmd, PR_CMD_XPWD_ID) == 0) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            dir_abs_path(p, pr_fs_getcwd(), TRUE));
+
+      } else if (pr_cmd_cmp(cmd, PR_CMD_CWD_ID) == 0 ||
+                 pr_cmd_cmp(cmd, PR_CMD_XCWD_ID) == 0) {
+
+        /* Note: by this point in the dispatch cycle, the current working
+         * directory has already been changed.  For the CWD/XCWD commands,
+         * this means that dir_abs_path() may return an improper path,
+         * with the target directory being reported twice.  To deal with this,
+         * don't use dir_abs_path(), and use pr_fs_getvwd()/pr_fs_getcwd()
+         * instead.
+         */
+        if (session.chroot_path) {
+          /* Chrooted session. */
+          if (strncmp(pr_fs_getvwd(), "/", 2) == 0) {
+            mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+              session.chroot_path);
+
+          } else {
+            mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+              pdircat(p, session.chroot_path, pr_fs_getvwd(), NULL));
+          }
+
+        } else {
+          /* Non-chrooted session. */
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            pr_fs_getcwd());
+        }
+
+      } else if (pr_cmd_cmp(cmd, PR_CMD_SITE_ID) == 0 &&
+                 (strncasecmp(cmd->argv[1], "CHGRP", 6) == 0 ||
+                  strncasecmp(cmd->argv[1], "CHMOD", 6) == 0 ||
+                  strncasecmp(cmd->argv[1], "UTIME", 6) == 0)) {
+        register unsigned int i;
+        char *tmp = "";
+
+        for (i = 3; i <= cmd->argc-1; i++) {
+          tmp = pstrcat(cmd->tmp_pool, tmp, *tmp ? " " : "",
+            pr_fs_decode_path(cmd->tmp_pool, cmd->argv[i]), NULL);
+        }
+
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          dir_abs_path(p, tmp, TRUE));
+
+      } else {
+        /* Some commands (i.e. DELE, MKD, RMD, XMKD, and XRMD) have associated
+         * filenames that are not stored in the session.xfer structure; these
+         * should be expanded properly as well.
+         */
+        if (pr_cmd_cmp(cmd, PR_CMD_DELE_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_LIST_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_MDTM_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_MKD_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_MLSD_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_MLST_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_NLST_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_RMD_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_XMKD_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_XRMD_ID) == 0) {
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            dir_abs_path(p, pr_fs_decode_path(p, cmd->arg), TRUE));
+
+        } else if (pr_cmd_cmp(cmd, PR_CMD_MFMT_ID) == 0) {
+          /* MFMT has, as its filename, the second argument. */
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+            dir_abs_path(p, pr_fs_decode_path(p, cmd->argv[2]), TRUE));
+        }
+      }
+
       m++;
       break;
 
