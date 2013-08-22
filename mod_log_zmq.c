@@ -55,6 +55,9 @@ static int log_zmq_payload_fmt = LOG_ZMQ_PAYLOAD_FMT_JSON;
 #define LOG_ZMQ_EVENT_FL_REQUEST		2
 #define LOG_ZMQ_EVENT_FL_DISCONNECT		3
 
+/* Default timeout: 500 millisecs */
+#define LOG_ZMQ_TIMEOUT_DEFAULT			500
+
 static zctx_t *zctx = NULL;
 static void *zsock = NULL;
 static array_header *endpoints = NULL;
@@ -78,11 +81,6 @@ struct field_info {
 #define LOG_ZMQ_FIELD_TYPE_BOOLEAN		1
 #define LOG_ZMQ_FIELD_TYPE_NUMBER		2
 #define LOG_ZMQ_FIELD_TYPE_STRING		3
-
-struct zsockopt {
-  int opt;
-  int val;
-};
 
 /* For tracking the size of deleted files. */
 static off_t log_zmq_dele_filesz = 0;
@@ -1414,6 +1412,22 @@ MODRET set_logzmqlog(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
+/* usage: LogZMQMaxPendingMessages count */
+MODRET set_logzmqmaxpendingmsgs(cmd_rec *cmd) {
+  config_rec *c;
+  int hwm = 0;
+
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+  CHECK_ARGS(cmd, 1);
+
+  hwm = atoi(cmd->argv[1]);
+  c = add_config_param(cmd->argv[0], 1, NULL);
+  c->argv[0] = palloc(c->pool, sizeof(int));
+  *((int *) c->argv[0]) = hwm;
+
+  return PR_HANDLED(cmd);
+}
+
 /* usage: LogZMQMessageEnvelope ... */
 MODRET set_logzmqmessageenvelope(cmd_rec *cmd) {
   CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
@@ -1444,45 +1458,18 @@ MODRET set_logzmqmessageformat(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
-/* usage: LogZMQOptions ... */
-MODRET set_logzmqoptions(cmd_rec *cmd) {
-  register unsigned int i;
+/* usage: LogZMQTimeout millisecs */
+MODRET set_logzmqtimeout(cmd_rec *cmd) {
   config_rec *c;
-  unsigned int nopts = 0, opti = 0;
+  int timeout = 0;
 
   CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+  CHECK_ARGS(cmd, 1);
 
-  nopts = (cmd->argc-1) / 2;
-
-  if (cmd->argc < 3 ||
-      cmd->argc > 5 ||
-      (cmd->argc-1) % 2 != 0) {
-    CONF_ERROR(cmd, "wrong number of parameters");
-  }
-
-  c = add_config_param(cmd->argv[0], nopts, NULL, NULL);
-
-  for (i = 1; i < cmd->argc-1; i += 2) {
-    struct zsockopt *so;
-
-    so = palloc(c->pool, sizeof(struct zsockopt));
-    if (strcasecmp(cmd->argv[i], "MaxPendingMessages") == 0) {
-      so->opt = ZMQ_SNDHWM;
-      so->val = atoi(cmd->argv[i+1]);
-
-    } else if (strcasecmp(cmd->argv[i], "Timeout") == 0) {
-      so->opt = ZMQ_SNDTIMEO;
-      so->val = atoi(cmd->argv[i+1]);
-
-      /* Note: zmq_setsockopt(ZMQ_SNDTIMEO) expects millisecs. */
-
-    } else {
-      CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, "unknown LogZMQOption: '",
-        cmd->argv[i], "'", NULL));
-    }
-
-    c->argv[opti++] = so;
-  }
+  timeout = atoi(cmd->argv[1]);
+  c = add_config_param(cmd->argv[0], 1, NULL);
+  c->argv[0] = palloc(c->pool, sizeof(int));
+  *((int *) c->argv[0]) = timeout;
 
   return PR_HANDLED(cmd);
 }
@@ -1572,6 +1559,7 @@ static int log_zmq_init(void) {
 static int log_zmq_sess_init(void) {
   config_rec *c;
   cmd_rec *cmd = NULL;
+  int timeout = LOG_ZMQ_TIMEOUT_DEFAULT;
 
   c = find_config(main_server->conf, CONF_PARAM, "LogZMQEngine", FALSE);
   if (c != NULL) {
@@ -1644,27 +1632,29 @@ if (pr_netaddr_use_ipv6()) {
 }
 #endif /* PR_USE_IPV6 */
 
-  /* Look up LogZMQOptions, apply the socket options to our socket. */
-  c = find_config(main_server->conf, CONF_PARAM, "LogZMQOptions", FALSE);
-  while (c != NULL) {
-    register unsigned int i;
+  c = find_config(main_server->conf, CONF_PARAM, "LogZMQMaxPendingMessages",
+    FALSE);
+  if (c != NULL) {
+    int val;
 
-    pr_signals_handle();
+    val = *((int *) c->argv[0]);
 
-    for (i = 0; i < c->argc; i++) {
-      struct zsockopt *so;
-
-      so = c->argv[i];
- 
-      if (zmq_setsockopt(zsock, so->opt, &(so->val), sizeof(int)) < 0) {
-        (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
-          "error setting %s option to %d: %s",
-          so->opt == ZMQ_SNDHWM ? "MaxPendingMessages" : "Timeout",
-          so->val, zmq_strerror(zmq_errno()));
-      }
+    if (zmq_setsockopt(zsock, ZMQ_SNDHWM, &val, sizeof(int)) < 0) {
+      (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+        "error setting LogZMQMaxPendingMessages to %d: %s", val,
+        zmq_strerror(zmq_errno()));
     }
+  }
 
-    c = find_config_next(c, c->next, CONF_PARAM, "LogZMQOptions", FALSE);
+  c = find_config(main_server->conf, CONF_PARAM, "LogZMQTimeout", FALSE);
+  if (c != NULL) {
+    timeout = *((int *) c->argv[0]);
+  }
+
+  if (zmq_setsockopt(zsock, ZMQ_SNDTIMEO, &timeout, sizeof(int)) < 0) {
+    (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+      "error setting LogZMQTimeout to %d millisecs: %s", timeout,
+      zmq_strerror(zmq_errno()));
   }
 
   /* Look up LogZMQEndpoint directives, bind socket to those addresses */
@@ -1696,6 +1686,7 @@ if (pr_netaddr_use_ipv6()) {
     (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
       "no LogZMQEndpoints configured, disabling module");
     log_zmq_engine = FALSE;
+    return 0;
   }
 
   pr_event_register(&log_zmq_module, "core.exit", log_zmq_exit_ev, NULL);
@@ -1714,9 +1705,10 @@ static conftable log_zmq_conftab[] = {
   { "LogZMQEndpoint",		set_logzmqendpoint,		NULL },
   { "LogZMQEngine",		set_logzmqengine,		NULL },
   { "LogZMQLog",		set_logzmqlog,			NULL },
+  { "LogZMQMaxPendingMessages", set_logzmqmaxpendingmsgs,	NULL },
   { "LogZMQMessageEnvelope",	set_logzmqmessageenvelope,	NULL },
   { "LogZMQMessageFormat",	set_logzmqmessageformat,	NULL },
-  { "LogZMQOptions",		set_logzmqoptions,		NULL },
+  { "LogZMQTimeout", 		set_logzmqtimeout,		NULL },
 
   { NULL }
 };

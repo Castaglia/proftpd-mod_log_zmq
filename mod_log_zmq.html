@@ -39,16 +39,16 @@ questions, concerns, or suggestions regarding this module.
   <li><a href="#LogZMQEndpoint">LogZMQEndpoint</a>
   <li><a href="#LogZMQEngine">LogZMQEngine</a>
   <li><a href="#LogZMQLog">LogZMQLog</a>
-  <li><a href="#LogZMQMessageEnvelope">LogZMQMessageEnvelope</a>
+  <li><a href="#LogZMQMaxPendingMessages">LogZMQMaxPendingMessages</a>
   <li><a href="#LogZMQMessageFormat">LogZMQMessageFormat</a>
-  <li><a href="#LogZMQOptions">LogZMQOptions</a>
+  <li><a href="#LogZMQTimeout">LogZMQTimeout</a>
 </ul>
 
 <p>
 <hr>
 <h2><a name="LogZMQDeliveryMode">LogZMQDeliveryMode</a></h2>
 <strong>Syntax:</strong> LogZMQDeliveryMode <em>"optimistic"|"guaranteed"</em><br>
-<strong>Default:</strong> <em>optimistic</em><br>
+<strong>Default:</strong> LogZMQDeliveryMode optimistic<br>
 <strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
 <strong>Module:</strong> mod_log_zmq<br>
 <strong>Compatibility:</strong> 1.3.5rc4 and later
@@ -109,9 +109,21 @@ parameter given must be the full path to the file to use for logging.
 
 <p>
 <hr>
+<h2><a name="LogZMQMaxPendingMessages">LogZMQMaxPendingMessages</a></h2>
+<strong>Syntax:</strong> LogZMQMaxPendingMessages <em>count</em><br>
+<strong>Default:</strong> None<br>
+<strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
+<strong>Module:</strong> mod_log_zmq<br>
+<strong>Compatibility:</strong> 1.3.5rc4 and later
+
+<p>
+The <code>LogZMQMaxPendingMessages</code> directive (ZMQ_SNDHWM)
+
+<p>
+<hr>
 <h2><a name="LogZMQMessageFormat">LogZMQMessageFormat</a></h2>
 <strong>Syntax:</strong> LogZMQMessageFormat <em>"json"</em><br>
-<strong>Default:</strong> <em>json</em><br>
+<strong>Default:</strong> LogZMQMessagerFormat json<br>
 <strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
 <strong>Module:</strong> mod_log_zmq<br>
 <strong>Compatibility:</strong> 1.3.5rc4 and later
@@ -119,6 +131,17 @@ parameter given must be the full path to the file to use for logging.
 <p>
 The <code>LogZMQMessageFormat</code> directive
 
+<p>
+<hr>
+<h2><a name="LogZMQTimeout">LogZMQTimeout</a></h2>
+<strong>Syntax:</strong> LogZMQTimeout <em>millisecs</em><br>
+<strong>Default:</strong> LogZMQTimeout 500<br>
+<strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
+<strong>Module:</strong> mod_log_zmq<br>
+<strong>Compatibility:</strong> 1.3.5rc4 and later
+
+<p>
+The <code>LogZMQTimeout</code> directive (ZMQ_SNDTIMEO)
 
 <p>
 <hr>
@@ -132,7 +155,7 @@ the proftpd source code and unpack the <code>mod_log_zmq</code> source tarball:
 after unpacking the latest proftpd-1.3.4 (or later) source code.  For including
 <code>mod_log_zmq</code> as a staticly linked module:
 <pre>
-  ./configure --with-modules=mod_log_zmq --with-in...
+  ./configure --with-modules=mod_log_zmq
 </pre>
 Alternatively, <code>mod_log_zmq</code> can be built as a DSO module:
 <pre>
@@ -153,6 +176,22 @@ Then follow the usual steps:
 <pre>
   make
   make install
+</pre>
+
+<p>
+<hr>
+<h2><a name="Usage">Usage</a></h2>
+
+Example configuration:
+<pre>
+  &lt;IfModule mod_log_zmq.c&gt;
+    LogFormat json "%u: %m (%b) [%T] %{iso8601}"
+
+    LogZMQDeliveryMode guaranteed
+    LogZMQEngine on
+    LogZMQLog /var/log/ftpd/log_zmq.log
+    LogZMQEndpoint tcp://*:7777 json
+  &lt;/IfModule&gt;
 </pre>
 
 <p>

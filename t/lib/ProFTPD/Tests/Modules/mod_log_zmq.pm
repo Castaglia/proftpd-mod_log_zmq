@@ -93,6 +93,7 @@ sub log_zmq_list {
 <IfModule mod_log_zmq.c>
   LogFormat custom "%u: %m (%b) [%T] %{FOO}e %{iso8601}"
 
+  LogZMQDeliveryMode guaranteed
   LogZMQEngine on
   LogZMQLog $log_file
   LogZMQEndpoint tcp://*:7777 custom
