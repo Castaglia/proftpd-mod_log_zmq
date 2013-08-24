@@ -16,11 +16,16 @@ ProFTPD 1.3.<i>x</i>, and is not compiled by default.  Installation
 instructions are discussed <a href="#Installation">here</a>.
 
 <p>
-The purpose of the <code>mod_log_zmq</code> module is to
+The purpose of the <code>mod_log_zmq</code> module is to send logging records
+via <a href="http://www.zeromq.org/">ZeroMQ</a> sockets, for <i>e.g.</i>
+remote log processing and notification handling.  The generated logging
+records might be JSON objects, or other supported formats.
 
 <p>
 The <code>mod_log_zmq</code> module uses the <code>zmq</code> and
-<code>czmq</code> libraries from ...
+<code>czmq</code> <a href="http://www.zeromq.org/">ZeroMQ</a> libraries;
+<em>development</em> versions of these libraries (including header files)
+<b>must</b> be installed to compile <code>mod_log_zmq</code>.
 
 <p>
 The most current version of <code>mod_log_zmq</code> can be found at:
@@ -54,12 +59,20 @@ questions, concerns, or suggestions regarding this module.
 <strong>Compatibility:</strong> 1.3.5rc4 and later
 
 <p>
-The <code>LogZMQDeliveryMode</code> directive
+The <code>LogZMQDeliveryMode</code> directive controls which type of
+ZeroMQ socket the <code>mod_log_zmq</code> module will use for publishing
+logging records.  The supported modes are:
+<ul>
+  <li><em>optimistic</em>: uses PUB socket (for pub/sub configurations)
+  <li><em>guaranteed</em>: uses PUSH socket (for pipeline configurations)
+</ul>
 
-  optimistic: PUB/SUB
-  guaranteed: PUSH/PULL
-
-  http://zguide.zeromq.org/page:all#Pros-and-Cons-of-Pub-Sub
+<p>
+For more information on the different ZeroMQ socket types, see:
+<ul>
+  <li><a href="http://api.zeromq.org/2-1:zmq-socket"><code>zmq_socket</code></a> docs
+  <li><a href="http://zguide.zeromq.org/page:all#Pros-and-Cons-of-Pub-Sub">Pros and Cons of Pub/Sub</a>
+</ul>
 
 <p>
 <hr>
@@ -71,7 +84,23 @@ The <code>LogZMQDeliveryMode</code> directive
 <strong>Compatibility:</strong> 1.3.5rc4 and later
 
 <p>
-The <code>LogZMQEndpoint</code> directive
+The <code>LogZMQEndpoint</code> directive configures the <em>address</em> (as
+formatted according to <a href="http://api.zeromq.org/2-1:zmq-bind"><code>zmq_bind</code></a> specifications) to which to send a logging record, the
+<code>LogFormat</code> <em>format-name</em> to use for the record for that
+address.
+
+<p>
+Note that multiple <code>LogZMQEndpoint</code> directives may be configured
+at the same time, to tell <code>mod_log_zmq</code> to send a logging record
+to multiple destinations.
+
+<p>
+For example, you can configure a custom <code>LogFormat</code>, and then use
+that format in a <code>LogZMQEndpoint</code> directive:
+<pre>
+  LogFormat custom "%u: %m (%b) [%T] %{iso8601}"
+  LogZMQEndpoint tcp://*:7777 custom
+</pre>
 
 <p>
 <hr>
@@ -83,15 +112,11 @@ The <code>LogZMQEndpoint</code> directive
 <strong>Compatibility:</strong> 1.3.5rc4 and later
 
 <p>
-The <code>LogZMQEngine</code> directive is used to specify a log file for
-<code>mod_sql</code> reporting and debugging, and can be done a per-server
-basis.  The <em>file</em> parameter must be the full path to the file to use for
-logging.
-
-<p>
-If <em>file</em> is &quot;none&quot;, no logging will be done at all; this
-setting can be used to override a <code>LogZMQLog</code> setting inherited from
-a <code>&lt;Global&gt;</code> context.
+The <code>LogZMQEngine</code> directive enables or disables the generation
+and sending of logging records via ZeroMQ sockets by the
+<code>mod_log_zmq</code> module.  If it is set to <em>off</em>, this module
+does no logging. Use this directive to disable the module instead of
+commenting out all <code>mod_log_zmq</code> directives.
 
 <p>
 <hr>
@@ -104,8 +129,14 @@ a <code>&lt;Global&gt;</code> context.
 
 <p>
 The <code>LogZMQLog</code> directive is used to specify a log file for
-<code>mod_log_zmq</code>'s reporting on a per-server basis.  The <em>file</em>
-parameter given must be the full path to the file to use for logging.
+<code>mod_log_zmq</code> reporting and debugging, and can be done a per-server
+basis.  The <em>file</em> parameter must be the full path to the file to use for
+logging.
+
+<p>
+If <em>file</em> is &quot;none&quot;, no logging will be done at all; this
+setting can be used to override a <code>LogZMQLog</code> setting inherited from
+a <code>&lt;Global&gt;</code> context.
 
 <p>
 <hr>
@@ -117,7 +148,16 @@ parameter given must be the full path to the file to use for logging.
 <strong>Compatibility:</strong> 1.3.5rc4 and later
 
 <p>
-The <code>LogZMQMaxPendingMessages</code> directive (ZMQ_SNDHWM)
+The <code>LogZMQMaxPendingMessages</code> directive configures the maximum
+number of messages that will be buffered up in the "pending" queue for the
+ZeroMQ sending socket, if the remote ZeroMQ sockets are having trouble keeping
+up.  When the <code>LogZMQMaxPendingMessages</code> limit is reached, additional
+messages may be silently dropped (as for the <em>optimistic</em> delivery mode)
+or rejected with an error (as for the <em>guaranteed</em> delivery mode).
+
+<p>
+For more details, consult the <a href="http://api.zeromq.org/3-0:zmq-setsockopt"><code>zmq_setsockopt</code></a> documentation about the
+<code>ZMQ_SNDHWM</code> option.
 
 <p>
 <hr>
@@ -129,7 +169,11 @@ The <code>LogZMQMaxPendingMessages</code> directive (ZMQ_SNDHWM)
 <strong>Compatibility:</strong> 1.3.5rc4 and later
 
 <p>
-The <code>LogZMQMessageFormat</code> directive
+The <code>LogZMQMessageFormat</code> directive configures the format of
+the logging record that <code>mod_log_zmq</code> generates.
+
+<p>
+Currently, only <em>json</em> is supported.
 
 <p>
 <hr>
@@ -141,7 +185,14 @@ The <code>LogZMQMessageFormat</code> directive
 <strong>Compatibility:</strong> 1.3.5rc4 and later
 
 <p>
-The <code>LogZMQTimeout</code> directive (ZMQ_SNDTIMEO)
+The <code>LogZMQTimeout</code> directive configures a timeout for ZeroMQ
+sending operations, in milliseconds.  If sending a logging record times out,
+the <code>mod_log_zmq</code> module will log a message to the
+<a href="#LogZMQLog"><code>LogZMQLog</code></a> file.
+
+<p>
+For more details, consult the <a href="http://api.zeromq.org/3-0:zmq-setsockopt"><code>zmq_setsockopt</code></a> documentation about the
+<code>ZMQ_SNDTIMEO</code> option.
 
 <p>
 <hr>
@@ -167,7 +218,7 @@ You will also need to tell <code>configure</code> how to find the ZeroMQ
 libraries and header files:
 <pre>
   ./configure --with-modules=mod_log_zmq \
-    --with-includes=<i>/path/to/zmq/include:/path/to/czmq/include \
+    --with-includes=<i>/path/to/zmq/include:/path/to/czmq/include</i> \
     --with-libraries=<i>/path/to/zmq/lib:/path/to/czmq/lib</i>
 </pre>
 
@@ -182,6 +233,7 @@ Then follow the usual steps:
 <hr>
 <h2><a name="Usage">Usage</a></h2>
 
+<p>
 Example configuration:
 <pre>
   &lt;IfModule mod_log_zmq.c&gt;
@@ -196,7 +248,9 @@ Example configuration:
 
 <p><a name="VariableKeys">
 <b><code>LogFormat</code> Variable Keys</b><br>
-
+When mapping the different <code>LogFormat</code> variables to JSON object
+key names, the following table is used:
+<p>
 <table border=1>
   <tr>
     <td><b><code>LogFormat</code> Variable</b></td>
@@ -414,11 +468,39 @@ Example configuration:
   </tr>
 </table>
 
-connecting/disconnecting (boolean)
+<p>
+In addition to the standard <code>LogFormat</code> variables, the
+<code>mod_log_zmq</code> module also adds a "connecting" key for records
+generated when a client first connects, and a "disconnecting" key for records
+generated when a client disconnects.  These keys can be used for determining
+the start/stop records for a given session.
+
+<p>
+Here is an example of the JSON-formatted records generated, using the above
+example configuration:
+<pre>
+  {"connecting":true,"timestamp":"2013-08-21 23:08:22,171"}
+  {"command":"USER","timestamp":"2013-08-21 23:08:22,278"}
+  {"user":"proftpd","command":"PASS","timestamp":"2013-08-21 23:08:22,305"}
+  {"user":"proftpd","command":"PASV","timestamp":"2013-08-21 23:08:22,317"}
+  {"user":"proftpd","command":"LIST","bytes_sent":432,"transfer_secs":4.211,"timestamp":"2013-08-21 23:08:22,329"}
+  {"user":"proftpd","command":"QUIT","timestamp":"2013-08-21 23:08:22,336"}
+  {"disconnecting":true,"user":"proftpd","timestamp":"2013-08-21 23:08:22,348"}
+</pre>
+Notice that for a given record, not all of the <code>LogFormat</code> variables
+are filled in.  If <code>mod_log_zmq</code> determines that a given
+<code>LogFormat</code> variable has no value for the logging record, it will
+simply omit that variable from the record.
+
+<p>
+Another thing to notice is that the generated JSON record ignores the
+textual delimiters configured by the <code>LogFormat</code> directive; all
+that matters are the <code>LogFormat</code> variables which appear in the
+directive.
 
 <p>
 <hr>
-Author: <i>$Author: tj $</i><br>
+Author: <i>castaglia</i><br>
 <hr>
 
 <font size=2><b><i>

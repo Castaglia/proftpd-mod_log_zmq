@@ -553,10 +553,28 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
       break;
     }
 
-    case LOGFMT_META_TIME:
-      /* XXX */
+    case LOGFMT_META_TIME: {
+      char *time_fmt = "%Y-%m-%d %H:%M:%S %z", ts[128];
+      struct tm *tm;
+      time_t now;
+
       m++;
+
+      now = time(NULL);
+      tm = pr_gmtime(NULL, &now);
+
+      if (*m == LOGFMT_META_START &&
+          *(m+1) == LOGFMT_META_ARG) {
+        size_t fmtlen = 0;
+
+        time_fmt = get_meta_arg(p, (m+2), &fmtlen);
+      }
+
+      strftime(ts, sizeof(ts)-1, time_fmt, tm);
+      mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, ts);
+
       break;
+    }
 
     case LOGFMT_META_SECONDS:
       if (session.xfer.p != NULL) {
@@ -744,7 +762,36 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
     }
 
     case LOGFMT_META_XFER_PATH:
-      /* XXX */
+      if (pr_cmd_cmp(cmd, PR_CMD_RNTO_ID) == 0) {
+        char *path;
+
+        path = dir_best_path(cmd->tmp_pool,
+          pr_fs_decode_path(cmd->tmp_pool, cmd->arg));
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, path);
+
+      } else if (session.xfer.p &&
+                 session.xfer.path) {
+        mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
+          session.xfer.path);
+
+      } else {
+        /* Some commands (i.e. DELE, MKD, XMKD, RMD, XRMD) have associated
+         * filenames that are not stored in the session.xfer structure; these
+         * should be expanded properly as well.
+         */
+        if (pr_cmd_cmp(cmd, PR_CMD_DELE_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_MKD_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_XMKD_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_RMD_ID) == 0 ||
+            pr_cmd_cmp(cmd, PR_CMD_XRMD_ID) == 0) {
+          char *path;
+
+          path = dir_best_path(cmd->tmp_pool,
+            pr_fs_decode_path(cmd->tmp_pool, cmd->arg));
+          mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, path);
+        }
+      }
+
       m++;
       break;
 
