@@ -1907,9 +1907,9 @@ if (pr_netaddr_use_ipv6()) {
     pr_signals_handle();
 
     addr = c->argv[0];
-    if (zsocket_bind(zsock, addr) < 0) {
+    if (zsocket_connect(zsock, addr) < 0) {
       (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
-        "error binding to LogZMQEndpoint '%s': %s", addr,
+        "error connecting to LogZMQEndpoint '%s': %s", addr,
         zmq_strerror(zmq_errno()));
       c = find_config_next(c, c->next, CONF_PARAM, "LogZMQEndpoint", FALSE);
       continue;

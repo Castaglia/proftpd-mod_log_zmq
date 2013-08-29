@@ -96,7 +96,7 @@ sub log_zmq_list {
   LogZMQDeliveryMode guaranteed
   LogZMQEngine on
   LogZMQLog $log_file
-  LogZMQEndpoint tcp://*:7777 custom
+  LogZMQEndpoint tcp://localhost:7777 custom
 </IfModule>
 EOC
     unless (close($fh)) {

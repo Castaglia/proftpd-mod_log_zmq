@@ -22,8 +22,8 @@ if ($sock_type == ZMQ_SUB) {
   zmq_setsockopt($sock, ZMQ_SUBSCRIBE, "");
 }
 
-if (zmq_connect($sock, $addr)) {
-  die("Can't connect ZMQ socket to $addr: $!");
+if (zmq_bind($sock, $addr)) {
+  die("Can't bind ZMQ socket to $addr: $!");
 }
 
 print STDOUT "waiting to receive message\n";
