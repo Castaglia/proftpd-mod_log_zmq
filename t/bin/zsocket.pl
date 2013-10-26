@@ -6,12 +6,16 @@ use ZMQ::Constants qw(ZMQ_PULL ZMQ_SUB ZMQ_SUBSCRIBE);
 use ZMQ::LibZMQ3;
 
 my $addr = $ARGV[0];
-print STDOUT "binding socket to $addr\n";
 
 my $ctx = zmq_init();
 
 #my $sock_type = ZMQ_SUB;
 my $sock_type = ZMQ_PULL;
+
+my $bind_socket = 1;
+my $connect_socket = 2;
+my $socket_mode = $connect_socket;
+
 my $sock = zmq_socket($ctx, $sock_type);
 unless ($sock) {
   die("Can't create $sock_type ZMQ socket: $!");
@@ -22,8 +26,19 @@ if ($sock_type == ZMQ_SUB) {
   zmq_setsockopt($sock, ZMQ_SUBSCRIBE, "");
 }
 
-if (zmq_connect($sock, $addr)) {
-  die("Can't connect ZMQ socket to $addr: $!");
+if ($socket_mode == $bind_socket) {
+  print STDOUT "binding socket to $addr\n";
+
+  if (zmq_bind($sock, $addr)) {
+    die("Can't bind ZMQ socket to $addr: $!");
+  }
+
+} elsif ($socket_mode == $connect_socket) {
+  print STDOUT "connecting socket to $addr\n";
+
+  if (zmq_connect($sock, $addr)) {
+    die("Can't connect ZMQ socket to $addr: $!");
+  }
 }
 
 print STDOUT "waiting to receive message\n";

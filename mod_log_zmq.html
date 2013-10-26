@@ -46,6 +46,7 @@ questions, concerns, or suggestions regarding this module.
   <li><a href="#LogZMQLog">LogZMQLog</a>
   <li><a href="#LogZMQMaxPendingMessages">LogZMQMaxPendingMessages</a>
   <li><a href="#LogZMQMessageFormat">LogZMQMessageFormat</a>
+  <li><a href="#LogZMQSocketMode">LogZMQSocketMode</a>
   <li><a href="#LogZMQTimeout">LogZMQTimeout</a>
 </ul>
 
@@ -84,10 +85,18 @@ For more information on the different ZeroMQ socket types, see:
 <strong>Compatibility:</strong> 1.3.5rc4 and later
 
 <p>
-The <code>LogZMQEndpoint</code> directive configures the <em>address</em> (as
-formatted according to <a href="http://api.zeromq.org/2-1:zmq-bind"><code>zmq_bind</code></a> specifications) to which to send a logging record, the
-<code>LogFormat</code> <em>format-name</em> to use for the record for that
-address.
+The <code>LogZMQEndpoint</code> directive configures the <em>address</em>
+to which to send a logg record, and the <code>LogFormat</code>
+<em>format-name</em> to use for the record for that address.
+
+<p>
+The format of the configured <em>address</em> depends on the configured
+<a href="#LogZMQSocketMode"><code>LogZMQSocketMode</code>.  If the
+<em>bind</em> socket mode is used, then the <em>address</em> should be
+formatted according to <a href="http://api.zeromq.org/2-1:zmq-bind"><code>zmq_bind</code></a> specifications; if the <em>connect</em> socket mode is used,
+then the specifications for the 
+<a href="http://api.zeromq.org/3-2:zmq-connect"><code>zmq_connect</code></a>
+function should be used.
 
 <p>
 Note that multiple <code>LogZMQEndpoint</code> directives may be configured
@@ -174,6 +183,25 @@ the logging record that <code>mod_log_zmq</code> generates.
 
 <p>
 Currently, only <em>json</em> is supported.
+
+<p>
+<hr>
+<h2><a name="LogZMQSocketMode">LogZMQSocketMode</a></h2>
+<strong>Syntax:</strong> LogZMQSocketMode <em>"bind"|"connect"</em><br>
+<strong>Default:</strong> LogZMQSocketMode bind<br>
+<strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
+<strong>Module:</strong> mod_log_zmq<br>
+<strong>Compatibility:</strong> 1.3.5rc4 and later
+
+<p>
+The <code>LogZMQSocketMode</code> directive controls whether the
+<code>mod_log_zmq</code> module will <em>bind</em> to the configured
+<code>LogZMQEndpoint</code> addresses, or <em>connect</em> to them.
+The supported modes are:
+<ul>
+  <li><em>bind</em>: binds/listens to the endpoint addresses
+  <li><em>connect</em>: connects to the endpoint addresses
+</ul>
 
 <p>
 <hr>

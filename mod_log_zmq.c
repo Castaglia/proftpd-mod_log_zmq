@@ -45,6 +45,11 @@ pool *log_zmq_pool = NULL;
 #define LOG_ZMQ_DELIVERY_MODE_GUARANTEED	2
 static int log_zmq_delivery_mode = LOG_ZMQ_DELIVERY_MODE_OPTIMISTIC;
 
+/* SocketMode values */
+#define LOG_ZMQ_SOCKET_MODE_BIND		1
+#define LOG_ZMQ_SOCKET_MODE_CONNECT		2
+static int log_zmq_socket_mode = LOG_ZMQ_SOCKET_MODE_BIND;
+
 /* Message/payload format values */
 #define LOG_ZMQ_PAYLOAD_FMT_JSON		1
 #define LOG_ZMQ_PAYLOAD_FMT_MSGPACK		2
@@ -1700,6 +1705,32 @@ MODRET set_logzmqmessageformat(cmd_rec *cmd) {
   return PR_HANDLED(cmd);
 }
 
+/* usage: LogZMQSocketMode bind|connect */
+MODRET set_logzmqsocketmode(cmd_rec *cmd) {
+  config_rec *c;
+  int socket_mode = 0;
+
+  CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
+  CHECK_ARGS(cmd, 1); 
+
+  if (strcasecmp(cmd->argv[1], "bind") == 0) {
+    socket_mode = LOG_ZMQ_SOCKET_MODE_BIND;
+
+  } else if (strcasecmp(cmd->argv[1], "connect") == 0) {
+    socket_mode = LOG_ZMQ_SOCKET_MODE_BIND;
+
+  } else {
+    CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, "unsupported socket mode: '",
+      cmd->argv[1], "'", NULL));
+  }
+
+  c = add_config_param(cmd->argv[0], 1, NULL);
+  c->argv[0] = palloc(c->pool, sizeof(int));
+  *((int *) c->argv[0]) = socket_mode;
+
+  return PR_HANDLED(cmd);
+}
+
 /* usage: LogZMQTimeout millisecs */
 MODRET set_logzmqtimeout(cmd_rec *cmd) {
   config_rec *c;
@@ -1840,6 +1871,11 @@ static int log_zmq_sess_init(void) {
     log_zmq_delivery_mode = *((int *) c->argv[0]);
   }
 
+  c = find_config(main_server->conf, CONF_PARAM, "LogZMQSocketMode", FALSE);
+  if (c != NULL) {
+    log_zmq_socket_mode = *((int *) c->argv[0]);
+  }
+
   zctx = zctx_new();
   if (zctx == NULL) {
     (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
@@ -1862,17 +1898,19 @@ static int log_zmq_sess_init(void) {
   }
 
 #ifdef PR_USE_IPV6
-if (pr_netaddr_use_ipv6()) {
-  int ipv4_only = 0;
+  if (pr_netaddr_use_ipv6()) {
+    int ipv4_only = 0;
 
-  /* Enable IPv6 ZMQ sockets. */
-  if (zmq_setsockopt(zsock, ZMQ_IPV4ONLY, &ipv4_only, sizeof(int)) < 0) {
-    (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
-      "error setting IPV4ONLY option to 'false': %s",
-      zmq_strerror(zmq_errno()));
+    /* Enable IPv6 ZMQ sockets. */
+    if (zmq_setsockopt(zsock, ZMQ_IPV4ONLY, &ipv4_only, sizeof(int)) < 0) {
+      (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+        "error setting IPV4ONLY option to 'false': %s",
+        zmq_strerror(zmq_errno()));
+    }
   }
-}
 #endif /* PR_USE_IPV6 */
+
+  /* XXX Any need to set the ZMQ_IDENTITY sockopt? */
 
   c = find_config(main_server->conf, CONF_PARAM, "LogZMQMaxPendingMessages",
     FALSE);
@@ -1899,7 +1937,9 @@ if (pr_netaddr_use_ipv6()) {
       zmq_strerror(zmq_errno()));
   }
 
-  /* Look up LogZMQEndpoint directives, bind socket to those addresses */
+  /* Look up LogZMQEndpoint directives, bind/connect socket to those
+   * addresses.
+   */
   c = find_config(main_server->conf, CONF_PARAM, "LogZMQEndpoint", FALSE);
   while (c != NULL) {
     char *addr = NULL;
@@ -1907,12 +1947,24 @@ if (pr_netaddr_use_ipv6()) {
     pr_signals_handle();
 
     addr = c->argv[0];
-    if (zsocket_bind(zsock, addr) < 0) {
-      (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
-        "error binding to LogZMQEndpoint '%s': %s", addr,
-        zmq_strerror(zmq_errno()));
-      c = find_config_next(c, c->next, CONF_PARAM, "LogZMQEndpoint", FALSE);
-      continue;
+
+    if (log_zmq_socket_mode == LOG_ZMQ_SOCKET_MODE_BIND) {
+      if (zsocket_bind(zsock, addr) < 0) {
+        (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+          "error binding to LogZMQEndpoint '%s': %s", addr,
+          zmq_strerror(zmq_errno()));
+        c = find_config_next(c, c->next, CONF_PARAM, "LogZMQEndpoint", FALSE);
+        continue;
+      }
+
+    } else if (log_zmq_socket_mode == LOG_ZMQ_SOCKET_MODE_CONNECT) {
+      if (zsocket_connect(zsock, addr) < 0) {
+        (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
+          "error connecting to LogZMQEndpoint '%s': %s", addr,
+          zmq_strerror(zmq_errno()));
+        c = find_config_next(c, c->next, CONF_PARAM, "LogZMQEndpoint", FALSE);
+        continue;
+      }
     }
 
     if (endpoints == NULL) {
@@ -1950,6 +2002,7 @@ static conftable log_zmq_conftab[] = {
   { "LogZMQMaxPendingMessages", set_logzmqmaxpendingmsgs,	NULL },
   { "LogZMQMessageEnvelope",	set_logzmqmessageenvelope,	NULL },
   { "LogZMQMessageFormat",	set_logzmqmessageformat,	NULL },
+  { "LogZMQSocketMode",		set_logzmqsocketmode,		NULL },
   { "LogZMQTimeout", 		set_logzmqtimeout,		NULL },
 
   { NULL }
