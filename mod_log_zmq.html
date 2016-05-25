@@ -52,7 +52,7 @@ questions, concerns, or suggestions regarding this module.
 
 <p>
 <hr>
-<h2><a name="LogZMQDeliveryMode">LogZMQDeliveryMode</a></h2>
+<h3><a name="LogZMQDeliveryMode">LogZMQDeliveryMode</a></h3>
 <strong>Syntax:</strong> LogZMQDeliveryMode <em>"optimistic"|"guaranteed"</em><br>
 <strong>Default:</strong> LogZMQDeliveryMode optimistic<br>
 <strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
@@ -77,7 +77,7 @@ For more information on the different ZeroMQ socket types, see:
 
 <p>
 <hr>
-<h2><a name="LogZMQEndpoint">LogZMQEndpoint</a></h2>
+<h3><a name="LogZMQEndpoint">LogZMQEndpoint</a></h3>
 <strong>Syntax:</strong> LogZMQEndpoint <em>address format-name</em><br>
 <strong>Default:</strong> None<br>
 <strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
@@ -91,7 +91,7 @@ to which to send a logg record, and the <code>LogFormat</code>
 
 <p>
 The format of the configured <em>address</em> depends on the configured
-<a href="#LogZMQSocketMode"><code>LogZMQSocketMode</code>.  If the
+<a href="#LogZMQSocketMode"><code>LogZMQSocketMode</code></a>.  If the
 <em>bind</em> socket mode is used, then the <em>address</em> should be
 formatted according to <a href="http://api.zeromq.org/2-1:zmq-bind"><code>zmq_bind</code></a> specifications; if the <em>connect</em> socket mode is used,
 then the specifications for the 
@@ -113,7 +113,7 @@ that format in a <code>LogZMQEndpoint</code> directive:
 
 <p>
 <hr>
-<h2><a name="LogZMQEngine">LogZMQEngine</a></h2>
+<h3><a name="LogZMQEngine">LogZMQEngine</a></h3>
 <strong>Syntax:</strong> LogZMQEngine <em>on|off</em><br>
 <strong>Default:</strong> None<br>
 <strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
@@ -129,7 +129,7 @@ commenting out all <code>mod_log_zmq</code> directives.
 
 <p>
 <hr>
-<h2><a name="LogZMQLog">LogZMQLog</a></h2>
+<h3><a name="LogZMQLog">LogZMQLog</a></h3>
 <strong>Syntax:</strong> LogZMQLog <em>file|"none"</em><br>
 <strong>Default:</strong> None<br>
 <strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
@@ -149,7 +149,7 @@ a <code>&lt;Global&gt;</code> context.
 
 <p>
 <hr>
-<h2><a name="LogZMQMaxPendingMessages">LogZMQMaxPendingMessages</a></h2>
+<h3><a name="LogZMQMaxPendingMessages">LogZMQMaxPendingMessages</a></h3>
 <strong>Syntax:</strong> LogZMQMaxPendingMessages <em>count</em><br>
 <strong>Default:</strong> None<br>
 <strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
@@ -170,7 +170,7 @@ For more details, consult the <a href="http://api.zeromq.org/3-0:zmq-setsockopt"
 
 <p>
 <hr>
-<h2><a name="LogZMQMessageFormat">LogZMQMessageFormat</a></h2>
+<h3><a name="LogZMQMessageFormat">LogZMQMessageFormat</a></h3>
 <strong>Syntax:</strong> LogZMQMessageFormat <em>"json"</em><br>
 <strong>Default:</strong> LogZMQMessagerFormat json<br>
 <strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
@@ -186,7 +186,7 @@ Currently, only <em>json</em> is supported.
 
 <p>
 <hr>
-<h2><a name="LogZMQSocketMode">LogZMQSocketMode</a></h2>
+<h3><a name="LogZMQSocketMode">LogZMQSocketMode</a></h3>
 <strong>Syntax:</strong> LogZMQSocketMode <em>"bind"|"connect"</em><br>
 <strong>Default:</strong> LogZMQSocketMode bind<br>
 <strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
@@ -205,7 +205,7 @@ The supported modes are:
 
 <p>
 <hr>
-<h2><a name="LogZMQTimeout">LogZMQTimeout</a></h2>
+<h3><a name="LogZMQTimeout">LogZMQTimeout</a></h3>
 <strong>Syntax:</strong> LogZMQTimeout <em>millisecs</em><br>
 <strong>Default:</strong> LogZMQTimeout 500<br>
 <strong>Context:</strong> server config, <code>&lt;VirtualHost&gt;</code>, <code>&lt;Global&gt;</code><br>
@@ -528,14 +528,10 @@ directive.
 
 <p>
 <hr>
-Author: <i>castaglia</i><br>
-<hr>
-
 <font size=2><b><i>
-&copy; Copyright 2013 TJ Saunders<br>
+&copy; Copyright 2013-2016 TJ Saunders<br>
  All Rights Reserved<br>
 </i></b></font>
-
 <hr>
 </body>
 </html>
