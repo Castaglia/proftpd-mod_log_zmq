@@ -32,13 +32,10 @@ static: $(MODULE_OBJS)
 	$(AR) rc $(MODULE_NAME).a $(MODULE_OBJS)
 	$(RANLIB) $(MODULE_NAME).a
 
-install: install-misc
+install:
 	if [ -f $(MODULE_NAME).la ] ; then \
 		$(LIBTOOL) --mode=install --tag=CC $(INSTALL_BIN) $(MODULE_NAME).la $(DESTDIR)$(LIBEXECDIR) ; \
 	fi
-
-install-misc:
-	$(INSTALL) -o $(INSTALL_USER) -g $(INSTALL_GROUP) -m 0644 PROFTPD-MIB.txt $(DESTDIR)$(sysconfdir)/PROFTPD-MIB.txt
 
 clean:
 	$(LIBTOOL) --mode=clean $(RM) $(MODULE_NAME).a $(MODULE_NAME).la *.o *.lo .libs/*.o
