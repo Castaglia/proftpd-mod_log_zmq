@@ -1,7 +1,6 @@
 /*
  * ProFTPD: mod_log_zmq -- logs data via ZeroMQ (using JSON)
- *
- * Copyright (c) 2013 TJ Saunders
+ * Copyright (c) 2013-2022 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +26,7 @@
 
 #include "conf.h"
 #include "privs.h"
-#include "mod_log.h"
+#include "logfmt.h"
 #include "mod_log_zmq.h"
 #include "json.h"
 
@@ -63,7 +62,7 @@ static int log_zmq_payload_fmt = LOG_ZMQ_PAYLOAD_FMT_JSON;
 /* Default timeout: 500 millisecs */
 #define LOG_ZMQ_TIMEOUT_DEFAULT			500
 
-static zctx_t *zctx = NULL;
+static void *zctx = NULL;
 static void *zsock = NULL;
 static array_header *endpoints = NULL;
 static pr_table_t *field_idtab = NULL;
@@ -352,7 +351,7 @@ static char *get_meta_arg(pool *p, unsigned char *m, size_t *arglen) {
 static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
     void *obj,
     void (*mkfield)(void *, const char *, size_t, unsigned int, const void *)) {
-  struct field_info *fi;
+  const struct field_info *fi;
   unsigned char *m;
   unsigned int meta;
 
@@ -364,7 +363,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
 
   switch (*m) {
     case LOGFMT_META_BYTES_SENT:
-      if (session.xfer.p) {
+      if (session.xfer.p != NULL) {
         double bytes_sent;
 
         bytes_sent = session.xfer.total_bytes;
@@ -388,7 +387,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
           dir_abs_path(p, pr_fs_decode_path(p, cmd->arg), TRUE));
 
       } else if (pr_cmd_cmp(cmd, PR_CMD_RETR_ID) == 0) {
-        char *path;
+        const char *path;
 
         path = pr_table_get(cmd->notes, "mod_xfer.retr-path", NULL);
         if (path != NULL) {
@@ -398,7 +397,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
 
       } else if (pr_cmd_cmp(cmd, PR_CMD_APPE_ID) == 0 ||
                  pr_cmd_cmp(cmd, PR_CMD_STOR_ID) == 0) {
-        char *path;
+        const char *path;
 
         path = pr_table_get(cmd->notes, "mod_xfer.store-path", NULL);
         if (path != NULL) {
@@ -535,7 +534,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
     }
 
     case LOGFMT_META_IDENT_USER: {
-      char *ident_user;
+      const char *ident_user;
 
       ident_user = pr_table_get(session.notes, "mod_ident.rfc1413-ident", NULL);
       if (ident_user != NULL) {
@@ -623,7 +622,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
           full_cmd);
 
       } else if (flags == LOG_ZMQ_EVENT_FL_REQUEST) {
-        char *full_cmd;
+        const char *full_cmd;
 
         full_cmd = get_full_cmd(cmd);
         mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
@@ -682,7 +681,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
       break;
 
     case LOGFMT_META_ORIGINAL_USER: {
-      char *orig_user = NULL;
+      const char *orig_user = NULL;
 
       orig_user = pr_table_get(session.notes, "mod_auth.orig-user", NULL);
       if (orig_user != NULL) {
@@ -695,7 +694,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
     }
 
     case LOGFMT_META_RESPONSE_CODE: {
-      char *resp_code = NULL;
+      const char *resp_code = NULL;
       int res;
 
       res = pr_response_get_last(cmd->tmp_pool, &resp_code, NULL);
@@ -727,7 +726,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
       break;
 
     case LOGFMT_META_ANON_PASS: {
-      char *anon_pass;
+      const char *anon_pass;
 
       anon_pass = pr_table_get(session.notes, "mod_auth.anon-passwd", NULL);
       if (anon_pass == NULL) {
@@ -756,7 +755,8 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
           }
 
           memset(buf, '\0', sizeof(buf));
-          snprintf(buf, sizeof(buf)-1, "%s %s", cmd->argv[0], cmd->argv[1]);
+          snprintf(buf, sizeof(buf)-1, "%s %s", (char *) cmd->argv[0],
+            (char *) cmd->argv[1]);
 
           mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, buf);
         }
@@ -905,7 +905,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
       break;
 
     case LOGFMT_META_RESPONSE_STR: {
-      char *resp_msg = NULL;
+      const char *resp_msg = NULL;
       int res;
 
       res = pr_response_get_last(p, NULL, &resp_msg);
@@ -941,7 +941,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
 
     case LOGFMT_META_RENAME_FROM:
       if (pr_cmd_cmp(cmd, PR_CMD_RNTO_ID) == 0) {
-        char *rnfr_path;
+        const char *rnfr_path;
 
         rnfr_path = pr_table_get(session.notes, "mod_core.rnfr-path", NULL);
         if (rnfr_path != NULL) {
@@ -955,7 +955,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
 
     case LOGFMT_META_FILE_MODIFIED: {
       bool modified = false;
-      char *val;
+      const char *val;
 
       val = pr_table_get(cmd->notes, "mod_xfer.file-modified", NULL);
       if (val != NULL) {
@@ -1016,8 +1016,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
     }
 
     case LOGFMT_META_EOS_REASON: {
-      const char *reason = NULL;
-      char *details = NULL;
+      const char *reason = NULL, *details = NULL;
 
       reason = pr_session_get_disconnect_reason(&details);
       if (reason != NULL) {
@@ -1049,7 +1048,8 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
 
       if (*m == LOGFMT_META_START &&
           *(m+1) == LOGFMT_META_ARG) {
-        char *key, *note = NULL;
+        const char *note = NULL;
+        char *key;
         size_t keylen = 0;
 
         key = get_meta_arg(p, (m+2), &keylen);
@@ -1093,8 +1093,8 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
         if (strncmp(proto, "ftp", 4) == 0 ||
             strncmp(proto, "ftps", 5) == 0) {
           if (!(XFER_ABORTED)) {
+            const char *resp_code = NULL, *resp_msg = NULL;
             int res;
-            char *resp_code = NULL, *resp_msg = NULL;
 
             /* Get the last response code/message.  We use heuristics here to
              * determine when to use "failed" versus "success".
@@ -1155,7 +1155,7 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
           /* mod_sftp stashes a note for us in the command notes if the
            * transfer failed.
            */
-          char *status;
+          const char *status;
 
           status = pr_table_get(cmd->notes, "mod_sftp.file-status", NULL);
           if (status == NULL) {
@@ -1192,8 +1192,8 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
             strncmp(proto, "ftps", 5) == 0) {
 
           if (!(XFER_ABORTED)) {
+            const char *resp_code = NULL, *resp_msg = NULL;
             int res;
-            char *resp_code = NULL, *resp_msg = NULL;
 
             /* Get the last response code/message.  We use heuristics here to
              * determine when to use "failed" versus "success".
@@ -1301,23 +1301,21 @@ static int log_zmq_mkrecord(int flags, cmd_rec *cmd,
   if (flags == LOG_ZMQ_EVENT_FL_CONNECT &&
       session.prev_server == NULL) {
     unsigned int meta = LOG_ZMQ_META_CONNECT;
-    struct field_info *fi;
+    const struct field_info *fi;
     bool connecting = true;
 
     fi = pr_table_kget(field_idtab, (const void *) &meta, sizeof(unsigned int),
       NULL);
-
     mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
       &connecting);
 
   } else if (flags == LOG_ZMQ_EVENT_FL_DISCONNECT) {
     unsigned int meta = LOG_ZMQ_META_DISCONNECT;
-    struct field_info *fi;
+    const struct field_info *fi;
     bool disconnecting = true;
 
     fi = pr_table_kget(field_idtab, (const void *) &meta, sizeof(unsigned int),
       NULL);
-
     mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type,
       &disconnecting);
   }
@@ -1551,7 +1549,8 @@ MODRET log_zmq_post_host(cmd_rec *cmd) {
     log_zmq_logfd = -1;
 
     if (zctx != NULL) {
-      zctx_destroy(&zctx);
+      zmq_ctx_destroy(zctx);
+      zctx = NULL;
     }
 
     res = log_zmq_sess_init();
@@ -1757,20 +1756,24 @@ static void log_zmq_exit_ev(const void *event_data, void *user_data) {
   log_zmq_log_event(cmd, LOG_ZMQ_EVENT_FL_DISCONNECT);
 
   if (zctx != NULL) {
+    int linger_timeout;
+
     /* Set a lingering timeout for a short time, to ensure that the last
      * message sent gets out.
      */
-    zctx_set_linger(zctx, 750);
+    linger_timeout = 750;
+    zmq_setsockopt(zsock, ZMQ_LINGER, &linger_timeout, sizeof(linger_timeout));
 
-    zctx_destroy(&zctx);
+    zmq_ctx_destroy(zctx);
+    zctx = NULL;
     zsock = NULL;
   }
 }
 
-#ifdef PR_SHARED_MODULE
+#if defined(PR_SHARED_MODULE)
 static void log_zmq_mod_unload_ev(const void *event_data, void *user_data) {
   if (strcmp("mod_log_zmq.c", (char *) event_data) == 0) {
-    pr_event_unregister(&log_zmq_module, NULL);
+    pr_event_unregister(&log_zmq_module, NULL, NULL);
   }
 }
 #endif /* PR_SHARED_MODULE */
@@ -1786,7 +1789,6 @@ static void log_zmq_restart_ev(const void *event_data, void *user_data) {
   if (log_zmq_mkfieldtab(log_zmq_pool) < 0) {
     /* XXX exit here */
   }
-
 }
 
 /* Initialization functions
@@ -1876,7 +1878,7 @@ static int log_zmq_sess_init(void) {
     log_zmq_socket_mode = *((int *) c->argv[0]);
   }
 
-  zctx = zctx_new();
+  zctx = zmq_ctx_new();
   if (zctx == NULL) {
     (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
       "error creating ZMQ context: %s: disabling module",
@@ -1885,14 +1887,16 @@ static int log_zmq_sess_init(void) {
     return 0;
   }
 
-  zsock = zsocket_new(zctx,
+  zsock = zmq_socket(zctx,
     log_zmq_delivery_mode == LOG_ZMQ_DELIVERY_MODE_OPTIMISTIC ?
       ZMQ_PUB : ZMQ_PUSH);
   if (zsock == NULL) {
     (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
       "error creating ZMQ socket: %s: disabling module",
       zmq_strerror(zmq_errno()));
-    zctx_destroy(&zctx);
+    zmq_ctx_destroy(zctx);
+    zctx = NULL;
+
     log_zmq_engine = FALSE;
     return 0;
   }
@@ -1949,7 +1953,7 @@ static int log_zmq_sess_init(void) {
     addr = c->argv[0];
 
     if (log_zmq_socket_mode == LOG_ZMQ_SOCKET_MODE_BIND) {
-      if (zsocket_bind(zsock, addr) < 0) {
+      if (zmq_bind(zsock, addr) < 0) {
         (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
           "error binding to LogZMQEndpoint '%s': %s", addr,
           zmq_strerror(zmq_errno()));
@@ -1958,7 +1962,7 @@ static int log_zmq_sess_init(void) {
       }
 
     } else if (log_zmq_socket_mode == LOG_ZMQ_SOCKET_MODE_CONNECT) {
-      if (zsocket_connect(zsock, addr) < 0) {
+      if (zmq_connect(zsock, addr) < 0) {
         (void) pr_log_writefile(log_zmq_logfd, MOD_LOG_ZMQ_VERSION,
           "error connecting to LogZMQEndpoint '%s': %s", addr,
           zmq_strerror(zmq_errno()));
