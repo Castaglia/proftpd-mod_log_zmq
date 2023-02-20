@@ -21,7 +21,7 @@
  *
  * --- DO NOT DELETE BELOW THIS LINE ----
  * $Libraries: -lzmq -lczmq$
- * $Archive: mod_log_zmq.a $
+ * $Archive: mod_log_zmq.a$
  */
 
 #include "conf.h"
@@ -1717,7 +1717,7 @@ MODRET set_logzmqsocketmode(cmd_rec *cmd) {
     socket_mode = LOG_ZMQ_SOCKET_MODE_BIND;
 
   } else if (strcasecmp(cmd->argv[1], "connect") == 0) {
-    socket_mode = LOG_ZMQ_SOCKET_MODE_BIND;
+    socket_mode = LOG_ZMQ_SOCKET_MODE_CONNECT;
 
   } else {
     CONF_ERROR(cmd, pstrcat(cmd->tmp_pool, "unsupported socket mode: '",
