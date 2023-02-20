@@ -1,6 +1,6 @@
 /*
  * ProFTPD: mod_log_zmq -- logs data via ZeroMQ (using JSON)
- * Copyright (c) 2013-2022 TJ Saunders
+ * Copyright (c) 2013-2023 TJ Saunders
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -894,7 +894,8 @@ static int find_next_meta(pool *p, int flags, cmd_rec *cmd, unsigned char **fmt,
 
         mkfield(obj, fi->field_name, fi->field_namelen, fi->field_type, params);
 
-      } else if (LOG_ZMQ_EVENT_FL_REQUEST && cmd->argc > 1) {
+      } else if (flags == LOG_ZMQ_EVENT_FL_REQUEST &&
+                 cmd->argc > 1) {
         const char *params;
 
         params = pr_fs_decode_path(p, cmd->arg);
@@ -1453,7 +1454,7 @@ static int log_zmq_log_event(cmd_rec *cmd, int flags) {
   elts = endpoints->elts;
   for (i = 0; i < endpoints->nelts; i++) {
     config_rec *c;
-    int res;
+    int res = 0;
     char *payload = NULL;
     size_t payload_len = 0;
 
@@ -1787,7 +1788,8 @@ static void log_zmq_restart_ev(const void *event_data, void *user_data) {
   pr_pool_tag(log_zmq_pool, MOD_LOG_ZMQ_VERSION);
 
   if (log_zmq_mkfieldtab(log_zmq_pool) < 0) {
-    /* XXX exit here */
+    pr_trace_msg(trace_channel, 1, "error initializing table: %s",
+      strerror(errno));
   }
 }
 
