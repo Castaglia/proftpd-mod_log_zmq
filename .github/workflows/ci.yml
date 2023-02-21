@@ -28,28 +28,32 @@ jobs:
 
     steps:
       - name: Checkout ProFTPD
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           repository: proftpd/proftpd
           path: proftpd
 
       - name: Checkout module source code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
-          path: proftpd/contrib/mod_log_zmq
+          path: proftpd-mod_log_zmq
 
       - name: Whitespace check
         if: ${{ matrix.container == 'ubuntu:18.04' }}
         run: |
           apt-get update -qq
           apt-get install -y git
-          cd proftpd/contrib/mod_log_zmq
+          cd proftpd-mod_log_zmq
           if [[ -n $(git diff --check HEAD^) ]]; then
             echo "You must remove whitespace before submitting a pull request"
             echo ""
             git diff --check HEAD^
             exit 1
           fi
+
+      - name: Prepare module source code
+        run: |
+          cp proftpd-mod_log_zmq/mod_log_zmq.c proftpd/contrib/
 
       - name: Install Alpine packages
         if: ${{ matrix.container == 'alpine:3.14' }}
@@ -152,5 +156,6 @@ jobs:
       - name: Check HTML docs
         if: ${{ matrix.container == 'ubuntu:18.04' }}
         run: |
-          cd proftpd/contrib/mod_log_zmq
-          for f in $(/bin/ls *.html); do echo "Processing $f"; tidy -errors -omit -q $f; done || exit 0
+          cd proftpd-mod_log_zmq
+          echo "Processing mod_log_zmq.html"
+          tidy -errors -omit -q mod_log_zmq.html | exit 0

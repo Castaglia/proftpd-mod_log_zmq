@@ -8,4 +8,4 @@ query-filters:
       id: cpp/poorly-documented-function
 
 paths:
-  - contrib/mod_log_zmq
+  - contrib/mod_log_zmq.c
