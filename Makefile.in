@@ -11,8 +11,8 @@ SHARED_LDFLAGS=-avoid-version -export-dynamic -module
 VPATH=@srcdir@
 
 MODULE_NAME=mod_log_zmq
-MODULE_OBJS=mod_log_zmq.o json.o
-SHARED_MODULE_OBJS=mod_log_zmq.lo json.lo
+MODULE_OBJS=mod_log_zmq.o
+SHARED_MODULE_OBJS=mod_log_zmq.lo
 
 # Necessary redefinitions
 INCLUDES=-I. -I../.. -I../../include @INCLUDES@
