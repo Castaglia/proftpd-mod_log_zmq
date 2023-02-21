@@ -38,12 +38,16 @@ jobs:
       - name: Checkout mod_log_zmq
         uses: actions/checkout@v3
         with:
-          path: contrib/mod_log_zmq
+          path: proftpd-mod_log_zmq
 
       - name: Install Packages
         run: |
           sudo apt-get update
           sudo apt-get install --yes libczmq-dev
+
+      - name: Prepare module
+        run: |
+          cp proftpd-mod_log_zmq/mod_log_zmq.c contrib/mod_log_zmq.c
 
       - name: Configure
         run: |
@@ -53,9 +57,9 @@ jobs:
         uses: github/codeql-action/init@v2
         with:
           languages: ${{ matrix.language }}
-          config-file: contrib/mod_log_zmq/.codeql.yml
+          config-file: proftpd-mod_log_zmq/.codeql.yml
           queries: +security-and-quality
-          source-root: contrib/mod_log_zmq
+          source-root: proftpd-mod_log_zmq
 
       - name: Build
         run: |
@@ -65,12 +69,12 @@ jobs:
         uses: github/codeql-action/analyze@v2
         with:
           category: "/language:${{ matrix.language }}"
-          checkout_path: contrib/mod_log_zmq
+          checkout_path: proftpd-mod_log_zmq
           output: sarif-results
           upload: false
 
       - name: Upload CodeQL SARIF
         uses: github/codeql-action/upload-sarif@v2
         with:
-          checkout_path: contrib/mod_log_zmq
+          checkout_path: proftpd-mod_log_zmq
           sarif_file: "sarif-results/${{ matrix.language }}.sarif"

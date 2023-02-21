@@ -28,16 +28,22 @@
 #include "privs.h"
 #include "jot.h"
 #include "logfmt.h"
-#include "mod_log_zmq.h"
 
 #include <zmq.h>
 #include <czmq.h>
 
+#define MOD_LOG_ZMQ_VERSION     "mod_log_zmq/0.1"
+
+/* Make sure the version of proftpd is as necessary. */
+#if PROFTPD_VERSION_NUMBER < 0x0001030701
+# error "ProFTPD 1.3.7rc1 or later required"
+#endif
+
 module log_zmq_module;
 
 static int log_zmq_engine = FALSE;
-int log_zmq_logfd = -1;
-pool *log_zmq_pool = NULL;
+static int log_zmq_logfd = -1;
+static pool *log_zmq_pool = NULL;
 
 static pr_table_t *jot_logfmt2json = NULL;
 
@@ -350,7 +356,7 @@ MODRET set_logzmqendpoint(cmd_rec *cmd) {
    * keys in the emitted JSON message.
    */
   log_fmtlen = strlen((char *) log_fmt);
-  custom_fmt = pcalloc(c->pool, log_fmtlen + 4);
+  custom_fmt = pcalloc(c->pool, log_fmtlen + 5);
   memcpy(custom_fmt, log_fmt, log_fmtlen);
 
   /* Now we very naughtily, programmatically add in the metas. */
