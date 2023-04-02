@@ -90,14 +90,14 @@ static int log_zmq_sess_init(void);
  *      http://www.ruby-doc.org/core-2.0/Time.html
  *
  *    It looks like the format is (strftime(3) pattern):
- *      "%Y-%m-%d %H:%M:%S %z" 
+ *      "%Y-%m-%d %H:%M:%S %z"
  *
  *    e.g.: "2012-11-10 18:16:12 +0100"
  *
  *  payload
  *
  * 0MQ Guide: Pub-Sub Message Envelopes:
- *  http://zguide.zeromq.org/page:all#Pub-Sub-Message-Envelopes  
+ *  http://zguide.zeromq.org/page:all#Pub-Sub-Message-Envelopes
  *
  *  tag/topic name
  *  sender address
@@ -220,7 +220,7 @@ static void log_events(cmd_rec *cmd) {
     config_rec *c;
 
     pr_signals_handle();
-   
+
     c = elts[i];
     log_event(c, cmd);
   }
@@ -298,7 +298,7 @@ MODRET set_logzmqdeliverymode(cmd_rec *cmd) {
   int delivery_mode = 0;
 
   CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
-  CHECK_ARGS(cmd, 1); 
+  CHECK_ARGS(cmd, 1);
 
   if (strcasecmp(cmd->argv[1], "optimistic") == 0) {
     delivery_mode = LOG_ZMQ_DELIVERY_MODE_OPTIMISTIC;
@@ -432,7 +432,7 @@ MODRET set_logzmqsocketmode(cmd_rec *cmd) {
   int socket_mode = 0;
 
   CHECK_CONF(cmd, CONF_ROOT|CONF_VIRTUAL|CONF_GLOBAL);
-  CHECK_ARGS(cmd, 1); 
+  CHECK_ARGS(cmd, 1);
 
   if (strcasecmp(cmd->argv[1], "bind") == 0) {
     socket_mode = LOG_ZMQ_SOCKET_MODE_BIND;
@@ -602,7 +602,7 @@ static int log_zmq_sess_init(void) {
 
       if (res < 0) {
         pr_log_pri(PR_LOG_NOTICE, MOD_LOG_ZMQ_VERSION
-          ": error opening LogZMQLog '%s': %s", path, strerror(xerrno)); 
+          ": error opening LogZMQLog '%s': %s", path, strerror(xerrno));
       }
     }
   }
