@@ -44,7 +44,7 @@ sub log_zmq_list {
     ScoreboardFile => $setup->{scoreboard_file},
     SystemLog => $setup->{log_file},
     TraceLog => $setup->{log_file},
-    Trace => 'DEFAULT:10 event:0 lock:0 scoreboard:0 signal:0 log_zmq:20',
+    Trace => 'log_zmq:20',
 
     AuthUserFile => $setup->{auth_user_file},
     AuthGroupFile => $setup->{auth_group_file},
@@ -66,7 +66,7 @@ sub log_zmq_list {
 
   LogZMQDeliveryMode guaranteed
   LogZMQEngine on
-  LogZMQLog $log_file
+  LogZMQLog $setup->{log_file}
   LogZMQEndpoint tcp://*:7777 custom
 </IfModule>
 EOC
@@ -100,9 +100,9 @@ EOC
       $client->login($setup->{user}, $setup->{passwd});
 
       my ($resp_code, $resp_msg) = $client->list();
-      $client->quit();
-
       $self->assert_transfer_ok($resp_code, $resp_msg);
+
+      $client->quit();
     };
     if ($@) {
       $ex = $@;
@@ -124,6 +124,44 @@ EOC
   # Stop server
   server_stop($setup->{pid_file});
   $self->assert_child_ok($pid);
+
+  eval {
+    if (open(my $fh, "< $setup->{log_file}")) {
+      my $zmq_json_ok = 0;
+      my $zmq_send_ok = 0;
+
+      while (my $line = <$fh>) {
+        chomp($line);
+
+        if ($ENV{TEST_VERBOSE}) {
+          print STDERR "# $line\n";
+        }
+
+        if ($line =~ /generated JSON payload for LIST/) {
+          $zmq_json_ok = 1;
+          next;
+        }
+
+        if ($line =~ /error sending message to LogZMQEndpoint.*?: Resource temporarily unavailable/) {
+          $zmq_send_ok = 1;
+        }
+      }
+
+      close($fh);
+
+      $self->assert($zmq_json_ok,
+        test_msg("Did not see expected 'log_zmq' JSON trace message"));
+      $self->assert($zmq_send_ok,
+        test_msg("Did not see expected LogZMQLog message about sending"));
+
+    } else {
+      die("Can't read $setup->{log_file}: $!");
+    }
+
+  };
+  if ($@) {
+    $ex = $@;
+  }
 
   test_cleanup($setup->{log_file}, $ex);
 }
